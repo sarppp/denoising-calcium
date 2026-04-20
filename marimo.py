@@ -105,6 +105,18 @@
 #     $$
 #     """)
 
+# Edit files, stage changes
+# git add <files>
+
+# Amend last commit (keep message)
+# git commit --amend --no-edit
+
+# Or amend with new message
+# git commit --amend -m "new message"
+
+# Force push to update remote
+# git push --force-with-lease
+
 
 # uv run --with="marimo[mcp]" marimo edit workspace/notebooks/06_proofs.py --mcp --no-token --host 0.0.0.0 --port 2719 --watch
 

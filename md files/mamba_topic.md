@@ -83,3 +83,31 @@ If that prints a shape and no import error, you're done — `uv run cidc train c
 ## 4. Fallback if Mamba build is painful
 
 Mamba is one of 5 models, not the backbone of the whole pipeline. If the build fight exceeds 20 min, skip it: the other 4 (`deepinterp`, `n2v3d`, `deepcad`, `pinn`-with-`n2v3d`-backbone) don't need `mamba-ssm` at all and cover the same architectural questions (spatial-temporal receptive field, biological prior). Come back to Mamba later.
+
+
+QUESTION:
+toml will already install cuda though right? only mamab I need to do
+
+ANSWER:
+
+Partial yes. Two different things:
+
+## What `uv sync` gives you (automatic)
+
+- **PyTorch + bundled CUDA runtime** (`cu124` wheels from the configured index). This includes `libcudart`, `libcublas`, `cuDNN`, etc. — everything PyTorch itself needs at runtime.
+- This is enough to run **4 of 5 models** (deepinterp, n2v3d, deepcad, pinn) with GPU acceleration end-to-end. No manual CUDA install needed.
+
+## What's missing (manual) — only needed for Mamba
+
+- **`nvcc`** (the CUDA **compiler**) + CUDA development headers. PyTorch wheels do **not** include these — they ship only the runtime.
+- `mamba-ssm` and `causal-conv1d` contain **hand-written CUDA kernels** that must be compiled from source against your system's `nvcc` at install time. That's why they need the CUDA Toolkit, not just the runtime.
+
+## Bottom line
+
+| Install step | Needed for |
+|---|---|
+| `uv sync` | everything except mamba3d |
+| `apt install cuda-toolkit-12-4` (one-time) | **only** required for mamba3d |
+| `uv pip install -e '.[mamba]' --no-build-isolation` | **only** required for mamba3d |
+
+So on your GPU box: `uv sync` is enough to start training n2v3d / deepcad / deepinterp / pinn immediately. The CUDA Toolkit + `.[mamba]` step is **only** if you want to run mamba3d. Skip it at first — see if Mamba ends up outperforming the others before spending time on the build.
