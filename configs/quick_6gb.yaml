@@ -1,0 +1,67 @@
+# Quick smoke-test config for 6 GB VRAM (RTX 2060 class).
+# Runs end-to-end in ~1–2 minutes: 2 epochs × ~200 steps, small patch,
+# small model. Intended for validating the full pipeline, NOT for a
+# competitive score.
+#
+# Scale up by editing `data.batch_size`, `data.patch`, `model.base_ch`,
+# and `training.epochs`. See configs/n2v3d.yaml for the canonical values.
+
+name: quick_6gb
+
+model:
+  name: n2v3d
+  kwargs:
+    in_ch:    1
+    base_ch:  8                            # 16 in full config
+    depth:    3
+    kernel:   3
+    pool:     2
+
+data:
+  patch:       [16, 64, 64]                # (32,128,128) in full
+  stride:      [4, 32, 32]
+  batch_size:  2                           # 2 * grad_accum=4 → effective 8
+  num_workers: 2
+  samples_per_epoch: 256                   # tiny for a 2-min smoke test
+  train_stacks: [A1]                       # single stack for fast iteration
+  val_stacks:  [F0, F1]
+  gain_aug:
+    enabled:           true
+    log_uniform_range: [20.0, 300.0]
+    prob:              0.5
+  flip:             true
+  rot90:            true
+  temporal_reverse: true
+
+training:
+  optimizer:     adamw
+  lr:            3.0e-4
+  weight_decay:  1.0e-4
+  scheduler:     cosine_restarts
+  restarts:      1
+  epochs:        2
+  warmup_steps:  50
+  grad_clip:     1.0
+  grad_accum:    4                         # 2 * 4 → effective batch 8
+  grad_ckpt:     false
+  ema_decay:     0.99
+  amp:           true
+  seed:          0
+  log_every:     20
+  ckpt_every:    1
+  early_stop:
+    metric:            stsnr_val
+    patience:          5
+    higher_is_better:  true
+
+loss:
+  name: poisson_gaussian_nll
+  var_floor: 1.0
+  aux: {}
+
+inference:
+  tile:    [16, 64, 64]
+  overlap: [4, 8, 8]
+  tta:
+    rotations: 1                           # TTA off for speed
+    flips:     false

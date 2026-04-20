@@ -1,0 +1,27 @@
+# Heavy data — downloaded from Zenodo, not part of the repo
+data/
+*.tif
+*.tiff
+
+# Marimo session state
+__marimo__/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs & checkpoints
+*.log
+checkpoints/
+runs/
+wandb/
+outputs/

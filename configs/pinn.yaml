@@ -1,0 +1,68 @@
+# PINN wrapper: any backbone + per-pixel calcium-kinetics head (τ, baseline, s(t)).
+# The kinetics regulariser is enabled via loss.aux.pinn.
+# Schema identical to n2v3d.yaml.
+name: pinn_mamba3d_v1
+
+model:
+  name: pinn
+  kwargs:
+    backbone:
+      name: mamba3d                       # any of: deepinterp | n2v3d | deepcad | mamba3d
+      kwargs:
+        in_ch:   1
+        base_ch: 16
+        depth:   3
+        kernel:  3
+        pool:    2
+        d_state:       16
+        d_conv:         4
+        expand:         2
+        n_layers:       2
+        bidirectional:  true
+    tau_range:     [5.0, 200.0]           # physical prior: τ ∈ 5–200 frames
+    baseline_from: head                   # 'head' (learn b per pixel) | 'median'
+
+data:
+  patch:       [32, 128, 128]
+  stride:      [8, 64, 64]
+  batch_size:  8                          # PINN head + ODE solve cost extra memory
+  num_workers: 4
+  train_stacks: [A1, B1, C2, D2]
+  val_stacks:  [F0, F1, F2]
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip:             true
+  rot90:            true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 3
+  epochs: 60
+  warmup_steps: 1000
+  grad_clip: 1.0
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 50
+  ckpt_every: 1
+  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
+
+loss:
+  name: poisson_gaussian_nll              # primary: denoise the whole patch
+  var_floor: 1.0
+  aux:
+    pinn:                                 # kinetics regulariser
+      enabled: true
+      weight:  0.01
+      extras:
+        sparsity_l1:   0.005
+        ode_dt:        1.0
+        detach_input:  false
+
+inference:
+  tile:    [32, 128, 128]
+  overlap: [8, 16, 16]
+  tta:     { rotations: 4, flips: true }

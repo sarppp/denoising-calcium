@@ -1,0 +1,57 @@
+# 3-D U-Net with bi-directional Mamba SSM at the bottleneck.
+# Schema identical to n2v3d.yaml.
+name: mamba3d_v1
+
+model:
+  name: mamba3d
+  kwargs:
+    # 3-D U-Net skeleton.
+    in_ch:   1
+    base_ch: 16
+    depth:   3                           # bottleneck at 2^3 downsampling
+    kernel:  3
+    pool:    2
+    # Mamba bottleneck.
+    d_state:       16                    # SSM hidden-state dim per channel
+    d_conv:         4                    # local 1-D causal conv width
+    expand:         2                    # inner expansion factor inside each Mamba block
+    n_layers:       2                    # stacked Mamba blocks at bottleneck
+    bidirectional:  true                 # forward + reverse over the flattened volume
+
+data:
+  patch:       [32, 128, 128]
+  stride:      [8, 64, 64]
+  batch_size:  12                        # slightly smaller batch: Mamba kernels use more VRAM
+  num_workers: 4
+  train_stacks: [A1, B1, C2, D2]
+  val_stacks:  [F0, F1, F2]
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip:             true
+  rot90:            true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 2.0e-4                             # Mamba is a little more sensitive to lr
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 3
+  epochs: 60
+  warmup_steps: 1000                     # longer warmup helps Mamba converge
+  grad_clip: 1.0
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 50
+  ckpt_every: 1
+  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
+
+loss:
+  name: poisson_gaussian_nll
+  var_floor: 1.0
+  aux: {}
+
+inference:
+  tile:    [32, 128, 128]
+  overlap: [8, 16, 16]
+  tta:     { rotations: 4, flips: true }

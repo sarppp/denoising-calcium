@@ -1,0 +1,48 @@
+# DeepInterpolation 2-D temporal U-Net.
+# Schema identical to n2v3d.yaml; see that file for field-by-field docs.
+name: deepinterp_v1
+
+model:
+  name: deepinterp
+  kwargs:
+    half_context: 6                      # K=6 → 13-frame input context
+    base_ch: 32
+    depth: 3
+
+data:
+  patch:       [13, 128, 128]            # T must equal 2*K+1
+  stride:      [1, 64, 64]
+  batch_size:  32
+  num_workers: 4
+  train_stacks: [A1, B1, C2, D2]
+  val_stacks:  [F0, F1, F2]
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip:             true
+  rot90:            true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 3
+  epochs: 50
+  warmup_steps: 500
+  grad_clip: 1.0
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 50
+  ckpt_every: 1
+  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
+
+loss:
+  name: poisson_gaussian_nll
+  var_floor: 1.0
+  aux: {}
+
+inference:
+  tile:    [13, 128, 128]
+  overlap: [0, 16, 16]                   # no temporal overlap (strided 1-frame)
+  tta:     { rotations: 4, flips: true }
