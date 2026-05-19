@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash /home/sarpk/.claude/plugins/cache/marimo-pair/marimo-pair/*/scripts/discover-servers.sh *)",
+      "Bash(bash /home/sarpk/.claude/plugins/cache/marimo-pair/marimo-pair/*/scripts/execute-code.sh *)"
+    ]
+  },
+  "mcpServers": {
+    "marimo": {
+      "serverUrl": "http://localhost:2719/mcp/server"
+    }
+  }
+}

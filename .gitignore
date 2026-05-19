@@ -1,10 +1,26 @@
-# Heavy data — downloaded from Zenodo, not part of the repo
+# Data — download via scripts/download_data.py (Zenodo, MD5-verified)
 data/
 *.tif
 *.tiff
 
+# Training outputs — large, regeneratable
+training/runs/
+training/checkpoints/
+training/__marimo__/
+training/.ipynb_checkpoints/
+
+# Notebook outputs — regenerate via save_notebook_*.py
+notebook_plots/
+all_plots/
+all_texts/
+all_pdfs/
+
+# Exported conversation snapshots
+decisions_code*.txt
+
 # Marimo session state
 __marimo__/
+*.ipynb_checkpoints/
 
 # Python
 __pycache__/
@@ -19,9 +35,7 @@ venv/
 .vscode/
 *.swp
 
-# Logs & checkpoints
+# Logs & model weights (outside runs/)
 *.log
-checkpoints/
-runs/
+*.pt
 wandb/
-outputs/
