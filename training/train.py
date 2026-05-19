@@ -250,21 +250,46 @@ def main(args) -> int:
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     scheduler = make_lr_scheduler(optimizer, epochs, warmup_epochs, lr, lr_min)
 
-    # Loss function — MSE is the ablation baseline for poor-R² stacks (A1/B1).
-    # NLL is the principled choice when noise model R² is good (C2/D2).
-    # Run both on A1/B1 for 10 epochs and compare val stSNR before full training.
+    # ── Loss function ─────────────────────────────────────────────────────────
+    # Three-way ablation on A1/B1 (poor R²) before committing to full training:
+    #
+    #   nll  — Poisson-Gaussian NLL. Principled when noise model fits (C2/D2 R²≈0.93).
+    #           Risky for A1/B1 (R²≈0.27) and val stacks (R²<0.24).
+    #   mse  — Mean squared error. Always stable. Suboptimal for Poisson noise
+    #           (over-weights large residuals, under-weights small ones).
+    #   mae  — Mean absolute error. Targets the median — more robust to heavy
+    #           Poisson tails than MSE. Often competitive for shot-noise-dominated
+    #           fluorescence data. nb04 measured it alongside MSE.
+    #
+    # Winner from ablation decides the full-training loss.
+    # Hybrid fallback: use nll for C2/D2 batches, mae for A1/B1 batches.
     loss_name = (args.loss or 'nll').lower()
+
+    class _SimpleWrapper(torch.nn.Module):
+        """Wrap a voxel-wise loss to match PGNLLLoss signature."""
+        def __init__(self, fn):
+            super().__init__()
+            self.fn = fn
+
+        def forward(self, y_pred, y_true, g, sigma_r_sq, mask=None, reduction='mean'):
+            elem = self.fn(y_pred, y_true)                   # [B, 1, T, H, W]
+            if mask is not None:
+                elem = elem * mask.unsqueeze(1)
+            if reduction == 'none':
+                return elem.mean(dim=(1, 2, 3, 4))           # [B]
+            if mask is not None:
+                return elem.sum() / (mask.sum() + 1e-8)
+            return elem.mean()
+
     if loss_name == 'mse':
-        import torch.nn as nn
-        _mse = nn.MSELoss()
-        class _MSEWrapper(torch.nn.Module):
-            def forward(self, y_pred, y_true, g, sigma_r_sq, mask=None, reduction='mean'):
-                loss = _mse(y_pred, y_true)
-                if reduction == 'none':
-                    return (y_pred - y_true).pow(2).mean(dim=(1,2,3,4))
-                return loss
-        loss_fn = _MSEWrapper()
-    else:
+        loss_fn = _SimpleWrapper(
+            lambda yp, yt: (yp - yt).pow(2)
+        )
+    elif loss_name == 'mae':
+        loss_fn = _SimpleWrapper(
+            lambda yp, yt: (yp - yt).abs()
+        )
+    else:  # nll (default)
         loss_fn = PGNLLLoss()
 
     logger.info(f"Loss: {loss_name.upper()}")
@@ -429,8 +454,8 @@ if __name__ == '__main__':
     )
 
     # Loss function (ablation)
-    p.add_argument('--loss', choices=['nll', 'mse'], default='nll',
-                   help='Loss function: nll (Poisson-Gaussian NLL) or mse (ablation baseline)')
+    p.add_argument('--loss', choices=['nll', 'mse', 'mae'], default='nll',
+                   help='nll=Poisson-Gaussian NLL (default), mse=MSE baseline, mae=MAE (robust to Poisson tails)')
 
     # Run identity
     p.add_argument('--run-name',   default='run',  help='Short label appended to run directory name')
