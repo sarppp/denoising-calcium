@@ -11,7 +11,6 @@ training/.ipynb_checkpoints/
 
 # Notebook outputs — regenerate via save_notebook_*.py
 notebook_plots/
-all_plots/
 all_texts/
 all_pdfs/
 

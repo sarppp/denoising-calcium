@@ -5,7 +5,7 @@
   <strong>Noise2Void in 3D on calcium imaging breaks if you use 2D masks, the wrong loss, or forget that temporal fidelity is half the metric.</strong><br>
   <strong>I built a complete measurement-first pipeline — 10 notebooks, physics-backed NLL, and gain augmentation — because every standard shortcut costs 5–14 dB on the leaderboard.</strong>
 
-  ![Temporal ACF on clean F0: τ₀.₅ = 46 frames justifies T = 128](all_plots/01_tsnr_baseline_plot_001.png)
+  ![Temporal ACF on clean F0: τ₀.₅ = 46 frames justifies T = 128](assets/01_tsnr_baseline_plot_001.png)
 </p>
 
 ---
@@ -90,7 +90,7 @@ A calcium transient at frame 0 has decayed to 50% amplitude by frame 46. By fram
 
 ### Notebook 02 — The Metric Geometry Discovery
 
-![Metric geometry: blur vs noise in (sSNR, tSNR) space](all_plots/02_metric_behavior_plot_001.png)
+![Metric geometry: blur vs noise in (sSNR, tSNR) space](assets/02_metric_behavior_plot_001.png)
 
 The plot above maps every degradation as a point in (sSNR, tSNR) space. Two curves emerge:
 - **Spatial blur** (blue circles): curves *above* the diagonal — tSNR is robust to spatial mixing because neighboring pixels share temporal dynamics.
@@ -102,7 +102,7 @@ The plot above maps every degradation as a point in (sSNR, tSNR) space. Two curv
 
 ### Notebook 03 — The Noise Model and Its Failure Mode
 
-![Noise model fit: variance = g × mean + σ_r²](all_plots/03_noise_model_plot_001.png)
+![Noise model fit: variance = g × mean + σ_r²](assets/03_noise_model_plot_001.png)
 
 Poisson-Gaussian noise: `Var[y] = g × E[y] + σ_r²`.
 
@@ -121,7 +121,7 @@ Poisson-Gaussian noise: `Var[y] = g × E[y] + σ_r²`.
 
 ### Notebook 05 — The 14 dB Penalty for Ignoring Gain
 
-![Model robustness to gain variation](all_plots/05_gain_augmentation_plot_001.png)
+![Model robustness to gain variation](assets/05_gain_augmentation_plot_001.png)
 
 We rescaled a clean patch to different effective gains and measured stSNR degradation:
 
@@ -139,7 +139,7 @@ A model trained at gain=28 and tested at gain=991 (35× mismatch, but we sample 
 
 ### Notebook 08 — Why the Stacks Look Identical but Aren't
 
-![F0 vs F1 vs F2 vs F3 at frame 100](all_plots/08_stack_comparison_plot_001.png)
+![F0 vs F1 vs F2 vs F3 at frame 100](assets/08_stack_comparison_plot_001.png)
 
 Same frame, same colourscale, four noise levels. F0 is clean. F1 is noisy. F2 is very noisy. F3 is almost pure noise — signal is 0.4% of total power.
 
@@ -172,7 +172,7 @@ No smart sampler needed. 25% of pixels are active neurons, and they are distribu
 
 ### Notebook 10 — The Calibration Trap and Two Quick Fixes
 
-![Noise model calibration on validation stacks](all_plots/10_noise_model_calibration_plot_001.png)
+![Noise model calibration on validation stacks](assets/10_noise_model_calibration_plot_001.png)
 
 Running the same variance-vs-mean fit on validation stacks (F0–F3) with naive background selection yields R² < 0.03 everywhere. The problem is **background selection**: using low-variance pixels selects dark background on clean F0, but on noisy F1/F2/F3 it selects *saturated bright pixels* (variance is dominated by noise, not signal).
 
