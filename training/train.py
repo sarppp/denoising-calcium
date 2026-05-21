@@ -41,7 +41,7 @@ import math
 from config import (
     NOISE_PARAMS, BASELINE_STSNR,
     PATCH_SIZE, G_AUG_MIN, G_AUG_MAX, G_AUG_LOG_MIN, G_AUG_LOG_MAX,
-    SIGMA_R_SQ_AUG, MASK_RATIO,
+    MASK_RATIO,
     IN_CHANNELS, OUT_CHANNELS, CHANNELS,
     BATCH_SIZE, LR, LR_MIN, WARMUP_EPOCHS, WEIGHT_DECAY, EPOCHS, GRAD_CLIP,
     N_PATCHES_PER_STACK, VAL_FREQ, CKPT_FREQ, ES_PATIENCE, ES_MIN_DELTA,
@@ -58,6 +58,12 @@ from training_utils import (
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+
+def _seed_worker(worker_id: int) -> None:
+    """Seed numpy/torch RNGs per DataLoader worker to avoid correlated augmentation."""
+    seed = torch.initial_seed() % (2**32 - 1)
+    np.random.seed(seed + worker_id)
+
 
 def setup_logging(log_path: Path) -> logging.Logger:
     fmt = '%(asctime)s  %(levelname)-7s  %(message)s'
@@ -209,26 +215,26 @@ def main(args) -> int:
 
     # ── Resolve parameters (CLI overrides config) ─────────────────────────────
     patch_size           = tuple(args.patch_size)   if args.patch_size   else PATCH_SIZE
-    batch_size           = args.batch_size           or BATCH_SIZE
-    epochs               = args.epochs               or EPOCHS
-    lr                   = args.lr                   or LR
-    lr_min               = args.lr_min               or LR_MIN
-    warmup_epochs        = args.warmup_epochs        or WARMUP_EPOCHS
-    weight_decay         = args.weight_decay         or WEIGHT_DECAY
-    grad_clip            = args.grad_clip            or GRAD_CLIP
-    n_patches_per_stack  = args.n_patches_per_stack  or N_PATCHES_PER_STACK
-    mask_ratio           = args.mask_ratio           or MASK_RATIO
+    batch_size           = args.batch_size           if args.batch_size  is not None else BATCH_SIZE
+    epochs               = args.epochs               if args.epochs      is not None else EPOCHS
+    lr                   = args.lr                   if args.lr          is not None else LR
+    lr_min               = args.lr_min               if args.lr_min      is not None else LR_MIN
+    warmup_epochs        = args.warmup_epochs        if args.warmup_epochs is not None else WARMUP_EPOCHS
+    weight_decay         = args.weight_decay         if args.weight_decay is not None else WEIGHT_DECAY
+    grad_clip            = args.grad_clip            if args.grad_clip   is not None else GRAD_CLIP
+    n_patches_per_stack  = args.n_patches_per_stack  if args.n_patches_per_stack is not None else N_PATCHES_PER_STACK
+    mask_ratio           = args.mask_ratio           if args.mask_ratio  is not None else MASK_RATIO
     channels             = tuple(args.channels) if args.channels else CHANNELS
-    val_freq             = args.val_freq             or VAL_FREQ
-    ckpt_freq            = args.ckpt_freq            or CKPT_FREQ
-    es_patience          = args.es_patience          or ES_PATIENCE
-    es_min_delta         = args.es_min_delta         or ES_MIN_DELTA
-    train_stacks         = args.stacks               or TRAIN_STACKS
+    val_freq             = args.val_freq             if args.val_freq    is not None else VAL_FREQ
+    ckpt_freq            = args.ckpt_freq            if args.ckpt_freq   is not None else CKPT_FREQ
+    es_patience          = args.es_patience          if args.es_patience is not None else ES_PATIENCE
+    es_min_delta         = args.es_min_delta         if args.es_min_delta is not None else ES_MIN_DELTA
+    train_stacks         = args.stacks               if args.stacks      is not None else TRAIN_STACKS
     data_dir             = Path(args.data_dir)
 
     # Gain augmentation range (CLI overrides config).
-    g_aug_min = args.g_aug_min or G_AUG_MIN
-    g_aug_max = args.g_aug_max or G_AUG_MAX
+    g_aug_min = args.g_aug_min if args.g_aug_min is not None else G_AUG_MIN
+    g_aug_max = args.g_aug_max if args.g_aug_max is not None else G_AUG_MAX
     g_aug_log_min = math.log(g_aug_min)
     g_aug_log_max = math.log(g_aug_max)
 
@@ -277,16 +283,17 @@ def main(args) -> int:
         patch_size         = patch_size,
         g_aug_log_min      = g_aug_log_min,
         g_aug_log_max      = g_aug_log_max,
-        sigma_r_sq_aug     = SIGMA_R_SQ_AUG,
         data_dir           = data_dir,
         n_patches_per_stack= n_patches_per_stack,
     )
     loader = DataLoader(
         dataset,
-        batch_size  = batch_size,
-        shuffle     = True,
-        num_workers = args.num_workers,
-        pin_memory  = True,
+        batch_size       = batch_size,
+        shuffle          = True,
+        num_workers      = args.num_workers,
+        pin_memory       = True,
+        worker_init_fn   = _seed_worker,
+        persistent_workers = args.num_workers > 0,
     )
     logger.info(f"Dataset: {len(dataset)} patches  {len(loader)} batches/epoch")
 

@@ -80,7 +80,7 @@ def spatio_temporal_snr(
 def _build_noise_map(patch: np.ndarray, g: float, sigma_r_sq: float) -> np.ndarray:
     """Noise map: σ_total = sqrt(σ_r² + g·signal), normalised to [0,1]."""
     std = np.sqrt(sigma_r_sq + g * np.maximum(patch, 0.0))
-    return (std / (std.max() + 1e-8)).astype(np.float32)
+    return (std / (std.max() + np.finfo(np.float32).eps)).astype(np.float32)
 
 
 def _starts(dim: int, patch: int, stride: int) -> list[int]:

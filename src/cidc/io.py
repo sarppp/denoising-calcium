@@ -44,12 +44,16 @@ def load_stack(path: str | Path) -> np.memmap:
 def stack_info(path: str | Path, stride: int = 50) -> StackInfo:
     """Compute ``StackInfo`` using a strided subset to stay fast.
 
-    We sample every ``stride``-th frame along the time axis; for [1500,
-    490, 490] stacks with stride=50 that is 30 frames ≈ 14 MB read.
+    We sample every ``stride``-th frame along the time axis, always
+    including the last frame to avoid boundary bias.  For [1500, 490,
+    490] stacks with stride=50 that is 31 frames ≈ 14 MB read.
     """
     p = Path(path)
     s = load_stack(p)
-    sub = np.asarray(s[::stride], dtype=np.float64)
+    indices = list(range(0, s.shape[0], stride))
+    if indices[-1] != s.shape[0] - 1:
+        indices.append(s.shape[0] - 1)
+    sub = np.asarray(s[indices], dtype=np.float64)
     return StackInfo(
         path=p,
         shape=tuple(int(x) for x in s.shape),
@@ -64,4 +68,5 @@ def iter_frames(stack: np.ndarray, start: int = 0, stop: int | None = None) -> I
     """Yield frames ``stack[t]`` as numpy arrays, one at a time."""
     T = stack.shape[0] if stop is None else int(stop)
     for t in range(int(start), T):
-        yield np.asarray(stack[t])
+        frame = stack[t]
+        yield frame if isinstance(frame, np.ndarray) else np.asarray(frame)

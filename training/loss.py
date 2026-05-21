@@ -71,7 +71,7 @@ class PGNLLLoss(nn.Module):
     def _as_bchannel(v: torch.Tensor | float, ref: torch.Tensor) -> torch.Tensor:
         """Broadcast a scalar or [B] tensor to [B, 1, 1, 1, 1]."""
         t = torch.as_tensor(v, dtype=torch.float32, device=ref.device)
-        t = torch.clamp(t, min=1e-8, max=1e6)
+        t = torch.clamp(t, min=1e-2, max=1e6)
         if t.dim() == 0:
             t = t.unsqueeze(0)
         return t.view(-1, 1, 1, 1, 1)
