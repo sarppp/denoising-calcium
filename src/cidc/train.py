@@ -69,12 +69,11 @@ def step_deepinterp(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     tgt_anscombe = batch["target"].to(model_device(model))      # (B, 1, H, W)
     params = _make_params(batch, 0)
     pred_adu = model(ctx, params)                               # (B, 1, H, W)
-    # Target is Anscombe-space; bring it to raw ADU for PG-NLL, or score in Z.
-    if cfg.loss.name == "anscombe_mse":
-        # Re-Anscombe the pred for fair comparison (approximate, fine for aux).
-        return anscombe_mse(pred_adu, tgt_anscombe)
-    # PG-NLL: compare pred_adu to the *raw* observation (undo anscombe on target).
+    # Target is Anscombe-space; invert to raw ADU so both pred and target
+    # share the same space regardless of which loss is selected.
     tgt_raw = (tgt_anscombe / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
+    if cfg.loss.name == "anscombe_mse":
+        return ((pred_adu - tgt_raw) ** 2).mean()
     return poisson_gaussian_nll(pred_adu, tgt_raw, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
 
 

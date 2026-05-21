@@ -47,7 +47,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from .noise import NoiseParams
+from .noise import NoiseParams, anscombe
 
 
 __all__ = [
@@ -317,7 +317,8 @@ def denoise_stack(
         Any instance of ``TemporalUNet``, ``UNet3D``, ``DeepCADNet``,
         ``MambaUNet3D``, or ``PINNWrapper``.
     noisy
-        Noisy stack, shape ``(T, H, W)``, dtype compatible with float32.
+        Noisy stack in raw ADU, shape ``(T, H, W)``, dtype compatible with float32.
+        The Anscombe transform is applied internally before model inference.
     params
         Noise parameters (gain, read_var) used by the model's Anscombe
         inverse. For a real denoising run, pass the file-matched params
@@ -338,11 +339,15 @@ def denoise_stack(
     model.to(device)
     amp_dtype = torch.bfloat16 if amp else None
 
+    # Models are trained on Anscombe-space input (unit-variance).
+    # ``noisy`` arrives in raw ADU — transform before feeding to the model.
+    noisy_anscombe = anscombe(noisy, params).astype(np.float32)
+
     # 2-D DeepInterp: frame-by-frame.
     if type(model).__name__ == "TemporalUNet":
         return _denoise_deepinterp(
             model,
-            noisy,
+            noisy_anscombe,
             params,
             half_context=int(model.half_context),
             device=device,
@@ -350,7 +355,7 @@ def denoise_stack(
         )
 
     if _is_3d_model(model):
-        return _denoise_3d(model, noisy, params, tile, overlap, device, amp_dtype)
+        return _denoise_3d(model, noisy_anscombe, params, tile, overlap, device, amp_dtype)
 
     raise TypeError(
         f"Unknown model class {type(model).__name__}. "

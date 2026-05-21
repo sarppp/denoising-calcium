@@ -102,7 +102,7 @@ class MambaUNet3D(nn.Module):
             h = dec(h)
 
         z_pred = self.head(h)
-        g = float(params.gain)
-        sr2 = float(max(params.read_var, 0.0))
+        g = torch.as_tensor(params.gain, dtype=z_pred.dtype, device=z_pred.device)
+        sr2 = torch.as_tensor(max(params.read_var, 0.0), dtype=z_pred.dtype, device=z_pred.device)
         # Asymptotic inverse Anscombe in raw ADU (differentiable).
         return (z_pred / 2.0).pow(2) * g - 0.375 * g - sr2 / g
