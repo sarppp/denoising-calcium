@@ -360,7 +360,7 @@ def main(args) -> int:
         existing = sorted(exp.ckpts.glob("model_epoch_*.pt"))
         if existing:
             ckpt_path = existing[-1]
-            ckpt      = torch.load(ckpt_path, map_location=device)
+            ckpt      = torch.load(ckpt_path, map_location=device, weights_only=True)
             model.load_state_dict(ckpt['model'])
             optimizer.load_state_dict(ckpt['optimizer'])
             if 'scheduler' in ckpt:
@@ -419,7 +419,7 @@ def main(args) -> int:
             val_results = evaluate(
                 model, data_dir, device,
                 fast       = True,
-                patch_size = patch_size[0],
+                patch_size = patch_size,
             )
             score = combined_score(val_results)
             logger.info(f"  Combined score: {score:+.2f} dB")
@@ -484,7 +484,7 @@ def main(args) -> int:
 
     # Full evaluation at the end.
     logger.info("\nRunning full evaluation (all frames) ...")
-    val_results = evaluate(model, data_dir, device, fast=False, patch_size=patch_size[0])
+    val_results = evaluate(model, data_dir, device, fast=False, patch_size=patch_size)
     score = combined_score(val_results)
     logger.info(f"Final combined score: {score:+.2f} dB")
 

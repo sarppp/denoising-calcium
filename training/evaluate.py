@@ -24,6 +24,7 @@ from cidc import load_stack
 from config import (
     PATCH_SIZE, IN_CHANNELS, OUT_CHANNELS, CHANNELS,
     SIGMA_R_SQ_AUG, G_INFER, BASELINE_STSNR, FAST_EVAL_STRIDE,
+    VAL_STACKS, STSNR_ALPHA,
 )
 from model import UNet3D
 
@@ -66,7 +67,7 @@ def temporal_snr(clean: np.ndarray, denoised: np.ndarray) -> float:
 def spatio_temporal_snr(
     clean:    np.ndarray,
     denoised: np.ndarray,
-    alpha:    float = 0.5,
+    alpha:    float = STSNR_ALPHA,
 ) -> dict[str, float]:
     """stSNR = α·sSNR + (1−α)·tSNR.  Returns all three components."""
     s = spatial_snr(clean, denoised)
@@ -82,50 +83,68 @@ def _build_noise_map(patch: np.ndarray, g: float, sigma_r_sq: float) -> np.ndarr
     return (std / (std.max() + 1e-8)).astype(np.float32)
 
 
+def _starts(dim: int, patch: int, stride: int) -> list[int]:
+    """Generate patch start positions with guaranteed edge coverage."""
+    starts = list(range(0, max(1, dim - patch + 1), stride))
+    if starts[-1] != max(0, dim - patch):
+        starts.append(max(0, dim - patch))
+    return starts
+
+
 def denoise_stack(
     model:      torch.nn.Module,
     stack:      np.ndarray,                     # [T, H, W]
     device:     torch.device,
-    patch_size: int = PATCH_SIZE[0],
+    patch_size: tuple[int, int, int] = PATCH_SIZE,
     overlap:    int | None = None,
     g:          float = G_INFER,
     sigma_r_sq: float = SIGMA_R_SQ_AUG,
 ) -> np.ndarray:
     """Sliding-window 3D denoising with overlap-averaging.
 
-    overlap defaults to patch_size // 2 (50 % overlap).
+    overlap defaults to half the per-axis patch size (50 % overlap).
     """
+    Pt, Ph, Pw = patch_size
     if overlap is None:
-        overlap = patch_size // 2
-    stride = patch_size - overlap
+        overlap_t = Pt // 2
+        overlap_h = Ph // 2
+        overlap_w = Pw // 2
+    else:
+        overlap_t = overlap_h = overlap_w = overlap
+    stride_t = Pt - overlap_t
+    stride_h = Ph - overlap_h
+    stride_w = Pw - overlap_w
 
     T, H, W   = stack.shape
-    denoised  = np.zeros_like(stack, dtype=np.float64)
-    count     = np.zeros_like(stack, dtype=np.float64)
+    denoised  = np.zeros_like(stack, dtype=np.float32)
+    count     = np.zeros_like(stack, dtype=np.float32)
 
-    t_starts = list(range(0, max(1, T - patch_size + 1), stride))
-    h_starts = list(range(0, max(1, H - patch_size + 1), stride))
-    w_starts = list(range(0, max(1, W - patch_size + 1), stride))
+    t_starts = _starts(T, Pt, stride_t)
+    h_starts = _starts(H, Ph, stride_h)
+    w_starts = _starts(W, Pw, stride_w)
     n_total   = len(t_starts) * len(h_starts) * len(w_starts)
     processed = 0
 
-    print(f"    stack {T}×{H}×{W}  patch {patch_size}³  stride {stride}  "
-          f"→ {n_total} patches")
+    print(f"    stack {T}×{H}×{W}  patch {Pt}×{Ph}×{Pw}  "
+          f"stride {stride_t}×{stride_h}×{stride_w}  → {n_total} patches")
 
     with torch.no_grad():
         for t in t_starts:
             for h in h_starts:
                 for w in w_starts:
-                    patch     = stack[t:t+patch_size, h:h+patch_size, w:w+patch_size]
+                    patch     = stack[t:t+Pt, h:h+Ph, w:w+Pw]
                     noise_map = _build_noise_map(patch, g, sigma_r_sq)
 
                     x = np.stack([patch, noise_map], axis=0).astype(np.float32)
-                    x = torch.from_numpy(x).unsqueeze(0).to(device)   # [1,2,T,H,W]
+                    x = torch.from_numpy(x).unsqueeze(0).to(device)   # [1,2,Pt,Ph,Pw]
 
-                    y_hat = model(x).squeeze(0).squeeze(0).cpu().numpy()  # [T,H,W]
+                    y_hat = model(x).squeeze(0).squeeze(0).cpu().numpy()
+                    assert y_hat.shape == (Pt, Ph, Pw), (
+                        f"Model output shape {y_hat.shape} != expected {(Pt, Ph, Pw)}"
+                    )
 
-                    denoised[t:t+patch_size, h:h+patch_size, w:w+patch_size] += y_hat
-                    count[t:t+patch_size,    h:h+patch_size, w:w+patch_size] += 1
+                    denoised[t:t+Pt, h:h+Ph, w:w+Pw] += y_hat
+                    count[t:t+Pt,    h:h+Ph, w:w+Pw] += 1
 
                     processed += 1
                     print(f"    {processed}/{n_total} ({100*processed//n_total}%)",
@@ -133,7 +152,7 @@ def denoise_stack(
 
     print(f"    {n_total}/{n_total} (100%)          ")
     np.divide(denoised, count, where=count > 0, out=denoised)
-    return denoised.astype(np.float32)
+    return denoised
 
 
 # ── Evaluation runner ─────────────────────────────────────────────────────────
@@ -143,8 +162,9 @@ def evaluate(
     data_dir:   Path,
     device:     torch.device,
     fast:       bool = False,
-    patch_size: int  = PATCH_SIZE[0],
+    patch_size: tuple[int, int, int] = PATCH_SIZE,
     overlap:    int | None = None,
+    stride:     int = FAST_EVAL_STRIDE,
 ) -> dict[str, dict[str, float]]:
     """Evaluate the model on F1/F2/F3 against clean F0.
 
@@ -156,25 +176,25 @@ def evaluate(
         dict mapping stack name → {'stSNR', 'sSNR', 'tSNR'}
     """
     model.eval()
-    stride_label = f"every {FAST_EVAL_STRIDE}th frame" if fast else "all frames"
+    stride_label = f"every {stride}th frame" if fast else "all frames"
     print(f"  Evaluation mode: {'fast' if fast else 'full'} ({stride_label})")
 
     clean_full = np.asarray(
         load_stack(data_dir / "val" / "F0.tif"), dtype=np.float32
     )
     if fast:
-        clean = clean_full[::FAST_EVAL_STRIDE]
+        clean = clean_full[::stride]
     else:
         clean = clean_full
 
     results: dict[str, dict[str, float]] = {}
 
-    for name in ['F1', 'F2', 'F3']:
+    for name in VAL_STACKS:
         noisy_full = np.asarray(
             load_stack(data_dir / "val" / f"{name}.tif"), dtype=np.float32
         )
         if fast:
-            noisy = noisy_full[::FAST_EVAL_STRIDE]
+            noisy = noisy_full[::stride]
         else:
             noisy = noisy_full
 
@@ -217,7 +237,7 @@ def main(args):
         return 1
 
     model = UNet3D(in_channels=IN_CHANNELS, out_channels=OUT_CHANNELS, channels=CHANNELS)
-    ckpt  = torch.load(model_path, map_location=device)
+    ckpt  = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt)
     model = model.to(device)
 
@@ -230,6 +250,7 @@ def main(args):
         device     = device,
         fast       = args.fast,
         patch_size = args.patch_size,
+        stride     = args.stride,
     )
 
     score = combined_score(results)
@@ -249,8 +270,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate trained denoiser')
     parser.add_argument('--model',      default='checkpoints/model_final.pt')
     parser.add_argument('--data-dir',   default=str(Path(__file__).parent.parent / "data"))
-    parser.add_argument('--patch-size', type=int, default=PATCH_SIZE[0])
+    parser.add_argument('--patch-size', type=int, nargs='+', default=list(PATCH_SIZE),
+                        help='Patch size: single int or three ints (T H W)')
+    parser.add_argument('--stride',     type=int, default=FAST_EVAL_STRIDE,
+                        help='Frame subsampling stride for --fast mode')
     parser.add_argument('--fast',       action='store_true',
                         help='Subsample temporal axis for quick check')
     args = parser.parse_args()
+    if len(args.patch_size) == 1:
+        args.patch_size = (args.patch_size[0],) * 3
+    elif len(args.patch_size) == 3:
+        args.patch_size = tuple(args.patch_size)
+    else:
+        parser.error("--patch-size accepts 1 or 3 integers")
     raise SystemExit(main(args))

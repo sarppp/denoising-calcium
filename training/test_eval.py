@@ -32,7 +32,7 @@ def main(args):
     )
 
     # Load checkpoint
-    ckpt = torch.load(model_path, map_location=device)
+    ckpt = torch.load(model_path, map_location=device, weights_only=True)
     if isinstance(ckpt, dict) and 'model' in ckpt:
         model.load_state_dict(ckpt['model'])
     else:

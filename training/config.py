@@ -54,6 +54,9 @@ G_INFER: float = math.exp((G_AUG_LOG_MIN + G_AUG_LOG_MAX) / 2)  # ≈ 150
 # Read noise for augmented batches — median across training stacks.
 SIGMA_R_SQ_AUG: float = 2700.0
 
+# stSNR weighting: stSNR = α·sSNR + (1−α)·tSNR.
+STSNR_ALPHA: float = 0.5
+
 # N2V3D masking (nb06 — mask_size=1 voxel, single-point blind-spot).
 MASK_RATIO: float = 0.005  # 0.5 % of voxels predicted per patch
 

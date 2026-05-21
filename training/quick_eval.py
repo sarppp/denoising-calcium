@@ -35,7 +35,7 @@ def main(args):
         return 1
 
     model = UNet3D(in_channels=IN_CHANNELS, out_channels=OUT_CHANNELS, channels=CHANNELS)
-    ckpt  = torch.load(model_path, map_location=device)
+    ckpt  = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt)
     model = model.to(device)
 
@@ -48,7 +48,7 @@ def main(args):
     print(f"Loaded: {model_path}{ckpt_info}\n")
 
     data_dir = Path(args.data_dir)
-    results  = evaluate(model, data_dir, device, fast=True, patch_size=args.patch_size)
+    results  = evaluate(model, data_dir, device, fast=True, patch_size=tuple(args.patch_size))
 
     if not args.all_stacks:
         results = {'F1': results['F1']}
@@ -73,6 +73,14 @@ if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Quick evaluation (fast, F1-only by default)')
     p.add_argument('--model',       default='checkpoints/model_final.pt')
     p.add_argument('--data-dir',    default=str(Path(__file__).parent.parent / "data"))
-    p.add_argument('--patch-size',  type=int, default=PATCH_SIZE[0])
+    p.add_argument('--patch-size',  type=int, nargs='+', default=list(PATCH_SIZE),
+                        help='Patch size: single int or three ints (T H W)')
     p.add_argument('--all-stacks',  action='store_true', help='Also evaluate F2 and F3')
-    raise SystemExit(main(p.parse_args()))
+    args = p.parse_args()
+    if len(args.patch_size) == 1:
+        args.patch_size = (args.patch_size[0],) * 3
+    elif len(args.patch_size) == 3:
+        args.patch_size = tuple(args.patch_size)
+    else:
+        p.error("--patch-size accepts 1 or 3 integers")
+    raise SystemExit(main(args))

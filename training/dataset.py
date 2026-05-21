@@ -90,8 +90,9 @@ class PatchDataset(Dataset):
 
         # Add fresh Poisson-Gaussian noise at the augmented gain.
         signal_for_poisson = np.maximum(rescaled, 0.0)
+        poisson_lambda = np.clip(signal_for_poisson / g_aug, 0, 6500)
         poisson_noise = (
-            np.random.poisson(signal_for_poisson / g_aug).astype(np.float32) * g_aug
+            np.random.poisson(poisson_lambda).astype(np.float32) * g_aug
             - signal_for_poisson
         )
         gaussian_noise = np.random.normal(
