@@ -173,8 +173,18 @@ def probe_training(
         mask       = mask_fn(y.shape[2:]).to(device)
         mask       = mask.unsqueeze(0).expand(y.shape[0], -1, -1, -1)
 
+        # Apply N2V mask: replace masked voxels with neighborhood mean
+        import torch.nn.functional as F
+        mask_expanded = mask.unsqueeze(1)  # [B, 1, T, H, W]
+        noisy = x[:, 0:1]  # [B, 1, T, H, W]
+        kernel = torch.ones(1, 1, 3, 3, 3, device=x.device, dtype=x.dtype) / 27.0
+        neighbor_mean = F.conv3d(noisy, kernel, padding=1)
+        noisy_masked = noisy * mask_expanded + neighbor_mean * (1 - mask_expanded)
+        x_masked = x.clone()
+        x_masked[:, 0:1] = noisy_masked
+
         optimizer.zero_grad()
-        y_pred = model(x)
+        y_pred = model(x_masked)
         loss   = loss_fn(y_pred, y, g, sigma_r_sq, mask)
 
         if not torch.isfinite(loss):
