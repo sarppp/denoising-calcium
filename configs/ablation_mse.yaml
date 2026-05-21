@@ -1,0 +1,47 @@
+# Same as ablation_nll.yaml except loss.name = mse (vanilla MSE in raw ADU).
+name: ablation_mse
+
+model:
+  name: n2v3d
+  kwargs: { in_ch: 1, base_ch: 12, depth: 3, kernel: 3, pool: 2 }
+
+data:
+  patch:       [64, 64, 64]
+  stride:      [16, 32, 32]
+  batch_size:  8
+  num_workers: 4
+  samples_per_epoch: 2000
+  train_stacks: [A1, B1]
+  val_stacks:  [F0, F1, F2]
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip: true
+  rot90: true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 1
+  epochs: 10
+  warmup_steps: 100
+  grad_clip: 1.0
+  grad_accum: 1
+  grad_ckpt: false
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 20
+  ckpt_every: 2
+  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
+
+loss:
+  name: mse                               # plain MSE (not anscombe_mse — that's different)
+  var_floor: 1.0
+  aux: {}
+
+inference:
+  tile: [64, 64, 64]
+  overlap: [16, 16, 16]
+  tta: { rotations: 1, flips: false }

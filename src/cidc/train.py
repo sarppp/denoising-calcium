@@ -88,6 +88,8 @@ def step_n2v3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     # Select masked positions only.
     pred_m = pred_adu[mask]
     tgt_m = tgt_raw[mask]
+    if cfg.loss.name == "mse":
+        return ((pred_m - tgt_m) ** 2).mean()
     return poisson_gaussian_nll(pred_m, tgt_m, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
 
 
@@ -103,6 +105,8 @@ def step_deepcad(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     params = _make_params(batch, 0)
     pred_adu = model(odd, params)                               # raw ADU
     tgt_raw = (even / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
+    if cfg.loss.name == "mse":
+        return ((pred_adu - tgt_raw) ** 2).mean()
     return poisson_gaussian_nll(pred_adu, tgt_raw, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
 
 
@@ -117,7 +121,10 @@ def step_pinn(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     tgt_raw = (vol / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
     pred_m = out.denoised[mask]
     tgt_m = tgt_raw[mask]
-    primary = poisson_gaussian_nll(pred_m, tgt_m, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
+    if cfg.loss.name == "mse":
+        primary = ((pred_m - tgt_m) ** 2).mean()
+    else:
+        primary = poisson_gaussian_nll(pred_m, tgt_m, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
 
     # Aux loss (PINN kinetics).
     aux_cfg = cfg.loss.aux.get("pinn")
