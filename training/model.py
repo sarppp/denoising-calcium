@@ -10,10 +10,10 @@ class ConvBlock3D(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv3d(in_ch, out_ch, 3, padding=1),
+            nn.Conv3d(in_ch, out_ch, 3, padding=1, bias=False),
             nn.BatchNorm3d(out_ch),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_ch, out_ch, 3, padding=1),
+            nn.Conv3d(out_ch, out_ch, 3, padding=1, bias=False),
             nn.BatchNorm3d(out_ch),
             nn.ReLU(inplace=True),
         )
