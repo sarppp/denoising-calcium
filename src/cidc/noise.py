@@ -100,6 +100,7 @@ def inverse_anscombe(
     params: NoiseParams,
     method: Literal["exact", "asymptotic"] = "exact",
     offset: float = 0.0,
+    exact_threshold: float = 0.5,
 ) -> np.ndarray:
     """Invert the generalised Anscombe transform.
 
@@ -114,6 +115,13 @@ def inverse_anscombe(
                    + 5 sqrt(3/2)/(8 z^3) - 1/8 - read_var / gain^2
 
     scaled by `gain` and shifted by `offset`.
+
+    Parameters
+    ----------
+    exact_threshold
+        z value below which the asymptotic formula is used instead of the
+        exact one. The exact formula has a 1/z singularity; 0.5 is a
+        conservative choice where the higher-order terms are still small.
     """
     g = float(params.gain)
     sr2 = float(max(params.read_var, 0.0))
@@ -121,9 +129,12 @@ def inverse_anscombe(
 
     if method == "asymptotic":
         y_minus_off = ((z / 2.0) ** 2 * g) - 0.375 * g - sr2 / g
-        return y_minus_off + offset
+        return np.maximum(y_minus_off + offset, 0.0)
 
     with np.errstate(divide="ignore", invalid="ignore"):
+        # z_safe prevents division by zero in the exact formula's 1/z terms.
+        # 1e-6 is chosen to be far from the singularity while still covering
+        # the low-count regime where the exact formula is most useful.
         z_safe = np.where(z > 1e-6, z, 1e-6)
         z2 = z_safe * z_safe
         term = (
@@ -136,8 +147,8 @@ def inverse_anscombe(
         )
     y_minus_off = g * term
     asym = ((z / 2.0) ** 2 * g) - 0.375 * g - sr2 / g
-    out = np.where(z > 0.5, y_minus_off, asym)
-    return out + offset
+    out = np.where(z > exact_threshold, y_minus_off, asym)
+    return np.maximum(out + offset, 0.0)
 
 
 # --------------------------------------------------------------------------- #

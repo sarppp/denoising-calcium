@@ -118,10 +118,16 @@ class PatchDataset(Dataset):
         # not the original patch. Using the original was a bug: the noise map
         # would not match the actual noise level of the augmented observation.
         noise_std = np.sqrt(sigma_r_sq + g_aug * signal_for_poisson)
+        # Use machine epsilon to avoid division-by-zero on all-zero patches;
+        # 1e-8 was too large (produces ~1e8 noise map values on zero patches).
         noise_map = noise_std / (noise_std.max() + np.finfo(np.float32).eps)  # normalise to [0,1]
 
         # ── Assemble tensors ──────────────────────────────────────────────────
         x = np.stack([noisy, noise_map], axis=0).astype(np.float32)  # [2, T, H, W]
+        # Target y = original patch (before gain augmentation), NOT rescaled.
+        # This is intentional: the model learns to map noisy-augmented input
+        # back to the original signal level. The PG NLL loss handles this
+        # correctly since it compares prediction against y at the original gain.
         y = patch[np.newaxis].astype(np.float32)                      # [1, T, H, W]
 
         return {

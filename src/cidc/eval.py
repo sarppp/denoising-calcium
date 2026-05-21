@@ -264,6 +264,10 @@ def _denoise_deepinterp(
     model.eval()
     stack_t = torch.from_numpy(np.ascontiguousarray(noisy)).float().to(device)
 
+    # Asymptotic inverse Anscombe params (same as UNet3D.forward).
+    g = float(params.gain)
+    sr2 = float(max(params.read_var, 0.0))
+
     first = K
     last = T - K
     for t in range(first, last):
@@ -271,10 +275,12 @@ def _denoise_deepinterp(
         ctx = stack_t[idx].unsqueeze(0)                          # (1, 2K, H, W)
         if amp_dtype is not None:
             with torch.autocast(device_type=device.type, dtype=amp_dtype):
-                y = model(ctx, params)
+                z = model(ctx, params)
         else:
-            y = model(ctx, params)
-        out[t] = y.float().squeeze(0).squeeze(0).cpu().numpy()
+            z = model(ctx, params)
+        # Model outputs Anscombe-space prediction; invert to raw ADU.
+        z = z.float().squeeze(0).squeeze(0).cpu().numpy()
+        out[t] = (z / 2.0) ** 2 * g - 0.375 * g - sr2 / g
 
     # Boundary copies — simplest valid strategy.
     for t in range(0, first):

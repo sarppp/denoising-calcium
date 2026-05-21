@@ -26,6 +26,12 @@ from ...noise import NoiseParams
 
 
 def _conv3d_block(in_ch: int, out_ch: int, kernel: int = 3, convs: int = 2) -> nn.Sequential:
+    """Two Conv3d + GroupNorm + SiLU blocks.
+
+    GroupNorm uses min(8, out_ch) groups. When out_ch < 8 (e.g. the 1-ch
+    head), groups == out_ch which is equivalent to InstanceNorm — acceptable
+    for the final 1×1×1 conv but only reachable if base_ch < 8.
+    """
     layers: list[nn.Module] = []
     pad = kernel // 2
     for i in range(convs):
