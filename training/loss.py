@@ -54,14 +54,14 @@ class PGNLLLoss(nn.Module):
         loss = torch.clamp(loss, min=0.0, max=1e4)
 
         if mask is not None:
-            # Only count loss on *observed* (mask=1) voxels — the N2V3D constraint.
-            # (mask=0 are the blind-spot voxels the model must predict.)
-            observed = mask.unsqueeze(1)  # [B, 1, T, H, W]
-            loss = loss * observed
+            # Only count loss on *masked* (mask=0) voxels — the N2V3D constraint.
+            # (mask=0 are the blind-spot voxels the model must predict from context.)
+            masked = 1.0 - mask.unsqueeze(1)  # [B, 1, T, H, W], 1 where we predict
+            loss = loss * masked
             if reduction == 'none':
-                n_obs = observed.sum(dim=(1, 2, 3, 4)).clamp(min=1)
-                return loss.sum(dim=(1, 2, 3, 4)) / n_obs   # [B]
-            return loss.sum() / (observed.sum() + eps)
+                n_masked = masked.sum(dim=(1, 2, 3, 4)).clamp(min=1)
+                return loss.sum(dim=(1, 2, 3, 4)) / n_masked   # [B]
+            return loss.sum() / (masked.sum() + eps)
         else:
             if reduction == 'none':
                 return loss.mean(dim=(1, 2, 3, 4))           # [B]
