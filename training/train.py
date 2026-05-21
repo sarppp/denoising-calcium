@@ -33,11 +33,15 @@ from datetime import datetime
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+
+import math
 
 from config import (
     NOISE_PARAMS, BASELINE_STSNR,
-    PATCH_SIZE, G_AUG_LOG_MIN, G_AUG_LOG_MAX, SIGMA_R_SQ_AUG, MASK_RATIO,
+    PATCH_SIZE, G_AUG_MIN, G_AUG_MAX, G_AUG_LOG_MIN, G_AUG_LOG_MAX,
+    SIGMA_R_SQ_AUG, MASK_RATIO,
     IN_CHANNELS, OUT_CHANNELS, CHANNELS,
     BATCH_SIZE, LR, LR_MIN, WARMUP_EPOCHS, WEIGHT_DECAY, EPOCHS, GRAD_CLIP,
     N_PATCHES_PER_STACK, VAL_FREQ, CKPT_FREQ, ES_PATIENCE, ES_MIN_DELTA,
@@ -66,6 +70,42 @@ def setup_logging(log_path: Path) -> logging.Logger:
         ],
     )
     return logging.getLogger('train')
+
+
+# ── N2V masking helper ────────────────────────────────────────────────────────
+
+def apply_n2v_mask(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Replace masked voxels (mask=0) with neighborhood mean.
+
+    For N2V, the model must not see the target voxel value. We replace
+    masked voxels in the noisy channel with the mean of their 3×3×3
+    neighborhood (excluding the center). This prevents the model from
+    trivially copying the input.
+
+    Args:
+        x: [B, C, T, H, W] input (channel 0 = noisy, channel 1 = noise_map)
+        mask: [B, T, H, W] mask where 0 = predict (blind-spot), 1 = observe
+    Returns:
+        x_masked: same shape, with masked voxels replaced in noisy channel
+    """
+    B, C, T, H, W = x.shape
+    mask_expanded = mask.unsqueeze(1)  # [B, 1, T, H, W]
+
+    # Only mask the noisy channel (channel 0), keep noise_map (channel 1)
+    noisy = x[:, 0:1]  # [B, 1, T, H, W]
+
+    # Compute neighborhood mean using 3D avg pool (kernel=3, stride=1, pad=1)
+    # This averages the 3×3×3 neighborhood including the center
+    kernel = torch.ones(1, 1, 3, 3, 3, device=x.device, dtype=x.dtype) / 27.0
+    neighbor_mean = F.conv3d(noisy, kernel, padding=1)  # [B, 1, T, H, W]
+
+    # Replace masked voxels with neighborhood mean
+    noisy_masked = noisy * mask_expanded + neighbor_mean * (1 - mask_expanded)
+
+    # Reconstruct: masked noisy channel + original noise_map
+    x_masked = x.clone()
+    x_masked[:, 0:1] = noisy_masked
+    return x_masked
 
 
 # ── One training epoch ────────────────────────────────────────────────────────
@@ -105,8 +145,12 @@ def train_epoch(
         mask = mask_fn(y.shape[2:]).to(device)             # [T, H, W]
         mask = mask.unsqueeze(0).expand(y.shape[0], -1, -1, -1)  # [B, T, H, W]
 
+        # Apply N2V mask: replace masked voxels with neighborhood mean
+        # so the model cannot trivially copy the target.
+        x_masked = apply_n2v_mask(x, mask)
+
         optimizer.zero_grad()
-        y_pred = model(x)
+        y_pred = model(x_masked)
 
         # Scalar loss for backward.
         loss = loss_fn(y_pred, y, g, sigma_r_sq, mask, reduction='mean')
@@ -178,6 +222,12 @@ def main(args) -> int:
     train_stacks         = args.stacks               or TRAIN_STACKS
     data_dir             = Path(args.data_dir)
 
+    # Gain augmentation range (CLI overrides config).
+    g_aug_min = args.g_aug_min or G_AUG_MIN
+    g_aug_max = args.g_aug_max or G_AUG_MAX
+    g_aug_log_min = math.log(g_aug_min)
+    g_aug_log_max = math.log(g_aug_max)
+
     # Reproducibility.
     if args.seed is not None:
         np.random.seed(args.seed)
@@ -212,8 +262,7 @@ def main(args) -> int:
         logger.info(f"GPU:      {props.name}  {props.total_memory/1e9:.1f} GB")
     logger.info(f"Config:   patch={patch_size}  bs={batch_size}  epochs={epochs}  "
                 f"lr={lr}  wd={weight_decay}")
-    logger.info(f"Augment:  LogUniform gain [{args.g_aug_min or 'default'},"
-                f"{args.g_aug_max or 'default'}]  mask={mask_ratio:.3f}")
+    logger.info(f"Augment:  LogUniform gain [{g_aug_min:.1f}, {g_aug_max:.1f}]  mask={mask_ratio:.3f}")
     logger.info("=" * 72)
 
     # ── Dataset ───────────────────────────────────────────────────────────────
@@ -222,8 +271,8 @@ def main(args) -> int:
         stack_names        = train_stacks,
         noise_params       = NOISE_PARAMS,
         patch_size         = patch_size,
-        g_aug_log_min      = G_AUG_LOG_MIN,
-        g_aug_log_max      = G_AUG_LOG_MAX,
+        g_aug_log_min      = g_aug_log_min,
+        g_aug_log_max      = g_aug_log_max,
         sigma_r_sq_aug     = SIGMA_R_SQ_AUG,
         data_dir           = data_dir,
         n_patches_per_stack= n_patches_per_stack,
@@ -274,11 +323,16 @@ def main(args) -> int:
         def forward(self, y_pred, y_true, g, sigma_r_sq, mask=None, reduction='mean'):
             elem = self.fn(y_pred, y_true)                   # [B, 1, T, H, W]
             if mask is not None:
-                elem = elem * mask.unsqueeze(1)
+                # Loss on masked voxels (mask=0) — same as PGNLLLoss
+                masked = 1.0 - mask.unsqueeze(1)  # [B, 1, T, H, W]
+                elem = elem * masked
             if reduction == 'none':
+                if mask is not None:
+                    n_masked = masked.sum(dim=(1, 2, 3, 4)).clamp(min=1)
+                    return elem.sum(dim=(1, 2, 3, 4)) / n_masked  # [B]
                 return elem.mean(dim=(1, 2, 3, 4))           # [B]
             if mask is not None:
-                return elem.sum() / (mask.sum() + 1e-8)
+                return elem.sum() / (masked.sum() + 1e-8)
             return elem.mean()
 
     if loss_name == 'mse':
