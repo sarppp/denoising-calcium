@@ -94,9 +94,11 @@ def apply_n2v_mask(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     # Only mask the noisy channel (channel 0), keep noise_map (channel 1)
     noisy = x[:, 0:1]  # [B, 1, T, H, W]
 
-    # Compute neighborhood mean using 3D avg pool (kernel=3, stride=1, pad=1)
-    # This averages the 3×3×3 neighborhood including the center
-    kernel = torch.ones(1, 1, 3, 3, 3, device=x.device, dtype=x.dtype) / 27.0
+    # Compute neighborhood mean using 3D conv with kernel that EXCLUDES center.
+    # This is the correct N2V blind-spot: predict from neighbors only.
+    kernel = torch.ones(1, 1, 3, 3, 3, device=x.device, dtype=x.dtype)
+    kernel[0, 0, 1, 1, 1] = 0.0  # exclude center voxel
+    kernel = kernel / kernel.sum()  # normalize to sum=1 (26 neighbors)
     neighbor_mean = F.conv3d(noisy, kernel, padding=1)  # [B, 1, T, H, W]
 
     # Replace masked voxels with neighborhood mean
@@ -141,9 +143,11 @@ def train_epoch(
             logger.warning(f"  epoch {epoch+1} batch {batch_idx+1}: NaN in input — skipped")
             continue
 
-        # N2V3D mask — same shape for every item in the batch.
-        mask = mask_fn(y.shape[2:]).to(device)             # [T, H, W]
-        mask = mask.unsqueeze(0).expand(y.shape[0], -1, -1, -1)  # [B, T, H, W]
+        # N2V3D mask — independent mask per sample in the batch.
+        # Each sample gets its own random blind-spot pattern so the model
+        # cannot overfit to specific spatial coordinates.
+        masks = [mask_fn(y.shape[2:]) for _ in range(y.shape[0])]  # list of [T, H, W]
+        mask = torch.stack(masks, dim=0).to(device)                 # [B, T, H, W]
 
         # Apply N2V mask: replace masked voxels with neighborhood mean
         # so the model cannot trivially copy the target.
