@@ -30,26 +30,37 @@ from model import UNet3D
 
 # ── SNR metrics (vectorised) ──────────────────────────────────────────────────
 
+def _snr_db(signal_energy: np.ndarray, residual_energy: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    """10 log10(signal / residual) element-wise, with floor."""
+    return 10.0 * np.log10(np.maximum(signal_energy, eps) / np.maximum(residual_energy, eps))
+
+
 def spatial_snr(clean: np.ndarray, denoised: np.ndarray) -> float:
-    """sSNR: per-frame SNR averaged over time.  O(T·H·W), fully vectorised."""
-    noise         = clean - denoised                       # [T, H, W]
-    signal_power  = np.mean(clean ** 2,  axis=(1, 2))     # [T]
-    noise_power   = np.mean(noise ** 2,  axis=(1, 2))     # [T]
-    valid         = noise_power > 0
+    """sSNR: per-frame SNR in dB, averaged over time.
+
+    sSNR_t = 10 log10( sum_{h,w} y[t]^2 / sum_{h,w} (y[t] - x[t])^2 )
+    """
+    noise        = clean - denoised                       # [T, H, W]
+    signal_power = (clean ** 2).sum(axis=(1, 2))         # [T]  — energy, not mean
+    noise_power  = (noise ** 2).sum(axis=(1, 2))         # [T]
+    valid        = noise_power > 0
     if not valid.any():
         return 0.0
-    return float(np.mean(signal_power[valid] / noise_power[valid]))
+    return float(_snr_db(signal_power[valid], noise_power[valid]).mean())
 
 
 def temporal_snr(clean: np.ndarray, denoised: np.ndarray) -> float:
-    """tSNR: per-pixel SNR averaged over space.  O(T·H·W), fully vectorised."""
+    """tSNR: per-pixel SNR in dB, averaged over space.
+
+    tSNR_{h,w} = 10 log10( sum_t y[:,h,w]^2 / sum_t (y[:,h,w] - x[:,h,w])^2 )
+    """
     noise       = clean - denoised                # [T, H, W]
-    signal_var  = np.var(clean,  axis=0)          # [H, W]
-    noise_var   = np.var(noise,  axis=0)          # [H, W]
+    signal_var  = (clean ** 2).sum(axis=0)        # [H, W] — energy, not variance
+    noise_var   = (noise ** 2).sum(axis=0)        # [H, W]
     valid       = noise_var > 0
     if not valid.any():
         return 0.0
-    return float(np.mean(signal_var[valid] / noise_var[valid]))
+    return float(_snr_db(signal_var[valid], noise_var[valid]).mean())
 
 
 def spatio_temporal_snr(
