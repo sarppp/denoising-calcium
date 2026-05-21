@@ -47,6 +47,14 @@ class PatchDataset(Dataset):
         for name in stack_names:
             path  = data_dir / "train" / f"{name}.tif"
             stack = np.asarray(load_stack(path), dtype=np.float32)
+            # Validate stack dimensions vs patch size
+            T, H, W = stack.shape
+            Tp, Hp, Wp = patch_size
+            if T < Tp or H < Hp or W < Wp:
+                raise ValueError(
+                    f"Stack {name} shape {(T, H, W)} is smaller than patch size {patch_size}. "
+                    f"Reduce --patch-size or use larger stacks."
+                )
             self.stacks[name] = stack
             print(f"  Loaded {name}: {stack.shape}  "
                   f"g={noise_params[name]['g']}  σ_r²={noise_params[name]['sigma_r_sq']}")
