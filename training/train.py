@@ -240,7 +240,7 @@ def main(args) -> int:
     # ── Model ─────────────────────────────────────────────────────────────────
     model = UNet3D(
         in_channels  = IN_CHANNELS,
-        out_channels = IN_CHANNELS,
+        out_channels = OUT_CHANNELS,
         channels     = list(channels),
     )
     model = model.to(device)
