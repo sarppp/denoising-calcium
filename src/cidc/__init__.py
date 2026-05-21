@@ -17,9 +17,15 @@ from .stats import (
     estimate_poisson_gaussian,
 )
 from . import models
-from . import data
 from .eval import StSNRResult, evaluate, denoise_stack, snr_spatial, snr_temporal, stsnr
 from .models import build_model
+
+
+def __getattr__(name: str):
+    if name == "data":
+        from . import data
+        return data
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "Config",
