@@ -28,17 +28,23 @@ from ...noise import NoiseParams
 def _conv3d_block(in_ch: int, out_ch: int, kernel: int = 3, convs: int = 2) -> nn.Sequential:
     """Two Conv3d + GroupNorm + SiLU blocks.
 
-    GroupNorm uses min(8, out_ch) groups. When out_ch < 8 (e.g. the 1-ch
-    head), groups == out_ch which is equivalent to InstanceNorm — acceptable
-    for the final 1×1×1 conv but only reachable if base_ch < 8.
+    GroupNorm uses the largest divisor of ``out_ch`` that is ≤ 8 groups.
+    When out_ch < 8 (e.g. the 1-ch head), groups == out_ch which is
+    equivalent to InstanceNorm.
     """
+    def _gn_groups(ch: int, max_groups: int = 8) -> int:
+        for g in range(min(max_groups, ch), 0, -1):
+            if ch % g == 0:
+                return g
+        return 1
+
     layers: list[nn.Module] = []
     pad = kernel // 2
     for i in range(convs):
         c_in = in_ch if i == 0 else out_ch
         layers += [
             nn.Conv3d(c_in, out_ch, kernel_size=kernel, padding=pad, bias=False),
-            nn.GroupNorm(num_groups=min(8, out_ch), num_channels=out_ch),
+            nn.GroupNorm(num_groups=_gn_groups(out_ch), num_channels=out_ch),
             nn.SiLU(inplace=True),
         ]
     return nn.Sequential(*layers)
@@ -112,6 +118,6 @@ class UNet3D(nn.Module):
             h = dec(h)
 
         z_pred = self.head(h)
-        g = float(params.gain)
-        sr2 = float(max(params.read_var, 0.0))
+        g = torch.as_tensor(params.gain, dtype=z_pred.dtype, device=z_pred.device)
+        sr2 = torch.as_tensor(max(params.read_var, 0.0), dtype=z_pred.dtype, device=z_pred.device)
         return (z_pred / 2.0).pow(2) * g - 0.375 * g - sr2 / g

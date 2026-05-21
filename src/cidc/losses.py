@@ -53,10 +53,13 @@ Key properties verified numerically in ``scripts/verify_nll.py``:
 
 Numerical stability
 -------------------
-`V(mu)` is clamped at `var_floor = max(sigma_r^2, eps)` so negative
+`V(mu)` is clamped at ``var_floor`` (default 1.0 ADU²) so negative
 predictions (which the network can produce early in training) do not
 cause log(0) / divide-by-zero.  We do *not* apply a softplus to mu; the
 clamp on V is sufficient and keeps the residual term well-defined.
+Note: ``var_floor`` is independent of ``read_var`` — for sufficiently
+negative mu the clamped variance can be much smaller than ``read_var``,
+sharpening the loss and gradients in that regime.
 
 References
 ----------

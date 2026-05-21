@@ -61,8 +61,18 @@ class UNet3D(nn.Module):
 
         # Decoder with skip connections
         up2 = self.upconv2(b)
+        if up2.shape[-3:] != e2.shape[-3:]:
+            dT = e2.shape[-3] - up2.shape[-3]
+            dH = e2.shape[-2] - up2.shape[-2]
+            dW = e2.shape[-1] - up2.shape[-1]
+            up2 = nn.functional.pad(up2, (0, dW, 0, dH, 0, dT))
         d2 = self.dec2(torch.cat([up2, e2], dim=1))
         up1 = self.upconv1(d2)
+        if up1.shape[-3:] != e1.shape[-3:]:
+            dT = e1.shape[-3] - up1.shape[-3]
+            dH = e1.shape[-2] - up1.shape[-2]
+            dW = e1.shape[-1] - up1.shape[-1]
+            up1 = nn.functional.pad(up1, (0, dW, 0, dH, 0, dT))
         d1 = self.dec1(torch.cat([up1, e1], dim=1))
 
         out = self.out(d1)

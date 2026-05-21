@@ -28,13 +28,21 @@ from torch import Tensor, nn
 from ...noise import NoiseParams
 
 
+def _gn_groups(ch: int, max_groups: int = 8) -> int:
+    """Largest divisor of ``ch`` that is ≤ ``max_groups``."""
+    for g in range(min(max_groups, ch), 0, -1):
+        if ch % g == 0:
+            return g
+    return 1
+
+
 def _conv_block(in_ch: int, out_ch: int, convs: int = 2) -> nn.Sequential:
     layers: list[nn.Module] = []
     for i in range(convs):
         c_in = in_ch if i == 0 else out_ch
         layers += [
             nn.Conv2d(c_in, out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(num_groups=min(8, out_ch), num_channels=out_ch),
+            nn.GroupNorm(num_groups=_gn_groups(out_ch), num_channels=out_ch),
             nn.SiLU(inplace=True),
         ]
     return nn.Sequential(*layers)
@@ -152,6 +160,6 @@ def _inverse_anscombe_torch(z: Tensor, params: NoiseParams) -> Tensor:
     Poisson-Gaussian NLL in raw ADU, so any residual bias of the
     asymptotic (vs Mäkitalo-Foi exact) inverse is absorbed by the head.
     """
-    g = float(params.gain)
-    sr2 = float(max(params.read_var, 0.0))
+    g = torch.as_tensor(params.gain, dtype=z.dtype, device=z.device)
+    sr2 = torch.as_tensor(max(params.read_var, 0.0), dtype=z.dtype, device=z.device)
     return (z / 2.0).pow(2) * g - 0.375 * g - sr2 / g

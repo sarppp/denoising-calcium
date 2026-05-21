@@ -1,6 +1,6 @@
 """Evaluation metric + universal inference for CIDC25.
 
-This module implements the challenge's ``stSNR`` exactly and provides a
+This module implements the challenge's ``stSNR`` and provides a
 single ``evaluate(model, noisy, reference)`` entry point that works for
 all 5 CIDC25 models (``deepinterp``, ``n2v3d``, ``deepcad``, ``mamba3d``,
 ``pinn``) via architecture-dispatching tile-and-blend inference.
@@ -21,6 +21,11 @@ For a denoised stack ``x`` and clean reference ``y``, both ``[T, H, W]``:
 
 Final leaderboard score = mean stSNR across files.
 
+Note: ``_snr_db()`` applies a small epsilon floor (1e-12) to both numerator
+and denominator to avoid ``log(0)`` and ``+inf``. Perfect reconstructions
+saturate at ~120 dB rather than +inf, and zero-energy frames/pixels receive
+a finite score. This is a practical deviation from the literal formula.
+
 Universal inference
 -------------------
 ``denoise_stack(model, noisy, params, ...)`` dispatches on model type:
@@ -31,11 +36,6 @@ Universal inference
   tile with cosine-blended seams in (T, H, W).
 - ``PINNWrapper``: extract the ``denoised`` field from the output dict and
   treat the wrapper as a 3-D backbone.
-
-Test-time augmentation (TTA) — rotations {0, 90, 180, 270} × flip {0, 1} —
-is applied in Anscombe space (so per-tile averaging is statistically
-sound) and the result is transformed back with the asymptotic inverse
-Anscombe at the caller level.
 """
 
 from __future__ import annotations
@@ -154,8 +154,13 @@ def _cosine_window_1d(n: int, overlap: int) -> np.ndarray:
     """
     if overlap <= 0:
         return np.ones(n, dtype=np.float64)
-    w = np.ones(n, dtype=np.float64)
     o = int(overlap)
+    if o > n // 2:
+        raise ValueError(
+            f"overlap={o} exceeds half the window length n={n}; "
+            f"ramps would overlap. Use overlap <= {n // 2}."
+        )
+    w = np.ones(n, dtype=np.float64)
     ramp = 0.5 * (1 - np.cos(np.pi * (np.arange(o) + 1) / (o + 1)))
     w[:o] = ramp
     w[-o:] = ramp[::-1]
@@ -264,10 +269,6 @@ def _denoise_deepinterp(
     model.eval()
     stack_t = torch.from_numpy(np.ascontiguousarray(noisy)).float().to(device)
 
-    # Asymptotic inverse Anscombe params (same as UNet3D.forward).
-    g = float(params.gain)
-    sr2 = float(max(params.read_var, 0.0))
-
     first = K
     last = T - K
     for t in range(first, last):
@@ -278,9 +279,8 @@ def _denoise_deepinterp(
                 z = model(ctx, params)
         else:
             z = model(ctx, params)
-        # Model outputs Anscombe-space prediction; invert to raw ADU.
-        z = z.float().squeeze(0).squeeze(0).cpu().numpy()
-        out[t] = (z / 2.0) ** 2 * g - 0.375 * g - sr2 / g
+        # TemporalUNet.forward() already returns raw ADU (inverts Anscombe internally).
+        out[t] = z.float().squeeze(0).squeeze(0).cpu().numpy()
 
     # Boundary copies — simplest valid strategy.
     for t in range(0, first):
