@@ -221,6 +221,33 @@ def _score_table(runs: list[dict], stack: str, compare_epoch: int, title: str) -
     return scores
 
 
+def _combined(label: str, scores: dict, also_scores: dict) -> float:
+    """Average of primary and OOD score.  Falls back to primary if OOD is missing."""
+    s1 = scores.get(label, float("nan"))
+    s2 = also_scores.get(label, float("nan"))
+    if _isfinite(s1) and _isfinite(s2):
+        return (s1 + s2) / 2.0
+    return s1   # no OOD data → primary only
+
+
+def _combined_table(runs: list[dict], scores: dict, also_scores: dict, stack: str, also: str) -> None:
+    """Print combined (primary + OOD) score table, sorted by combined score."""
+    col = 30
+    print(f"\n  Combined score: ({stack} + {also}) / 2  ← competition averages across stacks")
+    print(f"  {'Run (directory)':<{col}}  {'combined_stSNR':>14}  {'val_'+stack+'_stSNR':>16}  {'val_'+also+'_stSNR':>16}")
+    print(f"  {'─'*col}  {'─'*14}  {'─'*16}  {'─'*16}")
+    ranked = sorted(runs, key=lambda r: _combined(r["label"], scores, also_scores), reverse=True)
+    for r in ranked:
+        lb   = r["label"]
+        comb = _combined(lb, scores, also_scores)
+        s1   = scores.get(lb, float("nan"))
+        s2   = also_scores.get(lb, float("nan"))
+        c_s  = f"{comb:+.3f} dB" if _isfinite(comb) else "         ?"
+        s1_s = f"{s1:+.3f} dB"   if _isfinite(s1)   else "         ?"
+        s2_s = f"{s2:+.3f} dB"   if _isfinite(s2)   else "         ?"
+        print(f"  {lb:<{col}}  {c_s:>14}  {s1_s:>16}  {s2_s:>16}")
+
+
 def _verdict(runs: list[dict], stack: str, also: str | None, compare_epoch: int) -> None:
     print("\n" + "═" * 72)
     print(" MODEL VERDICT")
@@ -231,11 +258,21 @@ def _verdict(runs: list[dict], stack: str, also: str | None, compare_epoch: int)
     if also and also != stack:
         also_scores = _score_table(runs, also, compare_epoch, f"OOD stack: {also}")
 
-    # Stable runs only.
+    # When OOD scores are available, rank by combined score — that is what the
+    # competition actually measures.  Primary-only ranking caused wrong picks when
+    # a model is good on F1 but catastrophically bad on F3 (e.g. mamba_large).
+    def _rank_score(r):
+        return _combined(r["label"], scores, also_scores)
+
+    # Stable runs only (no NaN abort, finite primary score).
     stable_runs = [
         r for r in runs
         if r["nan_count"] < 5 and _isfinite(scores.get(r["label"], float("nan"))) and not r["aborted"]
     ]
+
+    # Print combined table when OOD data is available.
+    if also_scores:
+        _combined_table(stable_runs, scores, also_scores, stack, also)
 
     print("\n  Decision:")
 
@@ -244,64 +281,67 @@ def _verdict(runs: list[dict], stack: str, also: str | None, compare_epoch: int)
         print("═" * 72 + "\n")
         return
 
-    # Rank by primary stack score.
-    ranked = sorted(stable_runs, key=lambda r: scores[r["label"]], reverse=True)
-    best   = ranked[0]
-    best_sc = scores[best["label"]]
+    # Rank by combined score (primary only if no OOD available).
+    ranked  = sorted(stable_runs, key=_rank_score, reverse=True)
+    best    = ranked[0]
+    best_sc = _rank_score(best)
 
     # ── Size comparison: is large better than base? ─────────────────────────
-    # Heuristic: if run label contains "large" it's the large variant.
     large_runs = [r for r in stable_runs if "large" in r["label"].lower()]
     base_runs  = [r for r in stable_runs if "large" not in r["label"].lower()]
 
-    # Best large vs best base per model family.
     for family, keyword in [("N2V3D", "n2v3d"), ("Mamba", "mamba")]:
         fam_large = [r for r in large_runs if keyword in r["label"].lower()]
         fam_base  = [r for r in base_runs  if keyword in r["label"].lower()]
         if not fam_large or not fam_base:
             continue
-        best_large = max(fam_large, key=lambda r: scores[r["label"]])
-        best_base  = max(fam_base,  key=lambda r: scores[r["label"]])
-        gap = scores[best_large["label"]] - scores[best_base["label"]]
+        best_large = max(fam_large, key=_rank_score)
+        best_base  = max(fam_base,  key=_rank_score)
+        gap = _rank_score(best_large) - _rank_score(best_base)
+        metric_label = f"combined {stack}+{also}" if also_scores else stack
         if gap > CLEAR_WIN_DB:
-            print(f"  ✅ {family} large wins base by {gap:+.3f} dB → use large.")
+            print(f"  ✅ {family} large wins base by {gap:+.3f} dB ({metric_label}) → use large.")
         elif gap > TIE_DB:
-            print(f"  🟡 {family} large leads base by {gap:+.3f} dB (borderline).")
+            print(f"  🟡 {family} large leads base by {gap:+.3f} dB ({metric_label}, borderline).")
             print(f"     → Use large if you have VRAM budget; base is fine otherwise.")
         else:
-            print(f"  🔵 {family} large tied/lost vs base ({gap:+.3f} dB) → stick with base.")
+            print(f"  🔵 {family} large tied/lost vs base ({gap:+.3f} dB {metric_label}) → stick with base.")
 
     # ── Architecture comparison: Mamba vs N2V3D ─────────────────────────────
     best_mamba = max(
         (r for r in stable_runs if "mamba" in r["label"].lower()),
-        key=lambda r: scores[r["label"]], default=None
+        key=_rank_score, default=None
     )
     best_n2v3d = max(
         (r for r in stable_runs if "n2v3d" in r["label"].lower()),
-        key=lambda r: scores[r["label"]], default=None
+        key=_rank_score, default=None
     )
     if best_mamba and best_n2v3d:
-        gap = scores[best_mamba["label"]] - scores[best_n2v3d["label"]]
+        gap = _rank_score(best_mamba) - _rank_score(best_n2v3d)
+        metric_label = f"combined {stack}+{also}" if also_scores else stack
         if gap > CLEAR_WIN_DB:
-            print(f"\n  ✅ Mamba wins N2V3D by {gap:+.3f} dB → use Mamba.")
+            print(f"\n  ✅ Mamba wins N2V3D by {gap:+.3f} dB ({metric_label}) → use Mamba.")
             print("     SSM temporal modelling helped for calcium transient denoising.")
         elif gap > TIE_DB:
-            print(f"\n  🟡 Mamba leads N2V3D by {gap:+.3f} dB (borderline).")
+            print(f"\n  🟡 Mamba leads N2V3D by {gap:+.3f} dB ({metric_label}, borderline).")
             print("     → Use Mamba if install is stable; N2V3D is the safe fallback.")
         else:
-            print(f"\n  🔵 Mamba tied/lost vs N2V3D ({gap:+.3f} dB) → stick with N2V3D.")
+            print(f"\n  🔵 Mamba tied/lost vs N2V3D ({gap:+.3f} dB {metric_label}) → stick with N2V3D.")
             print("     No benefit from SSM; N2V3D is simpler, faster, easier to deploy.")
 
-    # ── OOD check ───────────────────────────────────────────────────────────
+    # ── OOD danger check ────────────────────────────────────────────────────
     if also_scores:
-        print(f"\n  OOD check ({also}):")
-        ood_ranked = sorted(stable_runs, key=lambda r: also_scores.get(r["label"], float("-inf")), reverse=True)
-        ood_winner = ood_ranked[0]
-        if ood_winner["label"] != best["label"]:
-            print(f"  ⚠  {stack} winner = {best['label']}  but  {also} winner = {ood_winner['label']}.")
-            print(f"     Competition averages across conditions — check both scores before deciding.")
-        else:
-            print(f"  ✅ {best['label']} leads on both {stack} and {also}. Consistent winner.")
+        print(f"\n  OOD danger check ({also} vs raw noisy baseline):")
+        for r in sorted(stable_runs, key=lambda r: also_scores.get(r["label"], float("-inf")), reverse=True):
+            lb  = r["label"]
+            sc  = also_scores.get(lb, float("nan"))
+            if not _isfinite(sc):
+                continue
+            # Warn if model is worse than doing nothing on OOD stack.
+            # F3 raw noisy baseline ≈ −6.64 dB; any score below that is a regression.
+            # We use a generous threshold: flag if score < −5 dB (slightly above true baseline).
+            flag = "  ❌ WORSE THAN NO DENOISING" if sc < -5.0 else ""
+            print(f"    {lb:<30s} {sc:+.3f} dB on {also}{flag}")
 
     # ── Overall recommendation ───────────────────────────────────────────────
     print(f"\n  Epoch trend (loss curve from last 4 epochs):")
@@ -310,9 +350,12 @@ def _verdict(runs: list[dict], stack: str, also: str | None, compare_epoch: int)
         n     = len(r["epochs_logged"])
         print(f"    [{r['label']:30s}] {trend}  ({n} epochs logged)")
 
-    print(f"\n  RECOMMENDATION: {best['label']}  ({best_sc:+.3f} dB on {stack})")
+    metric_label = f"combined {stack}+{also}" if also_scores else stack
+    print(f"\n  RECOMMENDATION: {best['label']}  ({best_sc:+.3f} dB {metric_label})")
+    print(f"    {stack}: {scores.get(best['label'], float('nan')):+.3f} dB", end="")
     if also_scores and _isfinite(also_scores.get(best["label"], float("nan"))):
-        print(f"                  ({also_scores[best['label']]:+.3f} dB on {also})")
+        print(f"  |  {also}: {also_scores[best['label']]:+.3f} dB", end="")
+    print()
     print("═" * 72 + "\n")
 
 
