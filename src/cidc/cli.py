@@ -112,7 +112,8 @@ def _cmd_train(args: argparse.Namespace) -> int:
         cfg.training.grad_accum = int(args.override_grad_accum)
     if args.train_stacks is not None:
         cfg.data.train_stacks = args.train_stacks
-    _train(cfg, Path(args.data), Path(args.out), probe_only=args.probe_only)
+    _train(cfg, Path(args.data), Path(args.out),
+           probe_only=args.probe_only, no_resume=args.no_resume)
     return 0
 
 
@@ -361,6 +362,8 @@ def main(argv: list[str] | None = None) -> int:
                    metavar="STACK", help="override data.train_stacks (e.g. A1 B1)")
     s.add_argument("--probe-only", action="store_true",
                    help="run 4-batch probe then exit (pipeline sanity check)")
+    s.add_argument("--no-resume", action="store_true",
+                   help="ignore existing last.pt and train from scratch")
     s.set_defaults(func=_cmd_train)
 
     # infer

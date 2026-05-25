@@ -115,13 +115,21 @@ class Is3DModel(Protocol):
 ```
 Or simpler: check for a `_IS_3D: bool = True` class attribute.
 
-### LIMITATION-03 · No resume support in src/cidc/train.py
-`src/cidc/train.py` starts from scratch every time. There's no checkpoint
-loading, no `--resume` flag.  
-**Why not fixed now:** Runs are short (ablation: 10 epochs; full: 100). If the
-job dies, re-starting from epoch 0 costs ~1.5h on T4.  
-**How to fix later:** At the start of `train()`, scan `out_dir` for `last.pt`,
-load `model`, `ema`, `opt`, `sched` state dicts, set `start_epoch = ckpt["epoch"] + 1`.
+### ~~LIMITATION-03~~ · ✅ FIXED — Resume support (committed 2026-05-25)
+**Was:** `src/cidc/train.py` started from scratch every time.  
+**Fix:** Auto-resume is now the default. On any run, if `out_dir/last.pt` exists,
+training picks up from `epoch + 1` with fully restored model, EMA, optimizer,
+scheduler, scaler, `best_val`, `bad_epochs`, and `global_step`. Use `--no-resume`
+to force a fresh start.
+
+Additional improvements in the same commit:
+- `last.pt` is saved **every epoch** (not just after validation), so a crash
+  at any point leaves a valid checkpoint.
+- `epoch_NNNN.pt` snapshots written every `cfg.training.ckpt_every` epochs
+  for rollback to any specific epoch.
+- Checkpoint saves are **atomic** (write to `.tmp` then `rename`) so a crash
+  mid-save never corrupts the checkpoint file.
+- Probe is **skipped on resume** (pipeline was already validated on the first run).
 
 ---
 
@@ -136,6 +144,12 @@ RUNS=/app/workspace/runs
 uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll --probe-only
 uv run cidc train configs/ablation_mse.yaml --data $DATA --out $RUNS/mse --probe-only
 uv run cidc train configs/ablation_mae.yaml --data $DATA --out $RUNS/mae --probe-only
+
+# If a run crashes, just re-run the same command — it auto-resumes from last.pt
+uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll
+
+# Force restart from scratch (ignore existing checkpoint)
+uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll --no-resume
 
 # Full 10-epoch ablation
 uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll

@@ -274,7 +274,71 @@ def _probe(model: nn.Module, loader, step_fn, cfg, device: torch.device,
         print(f"[probe] OK  {losses[0]:.4f} → {losses[-1]:.4f}", flush=True)
 
 
-def train(cfg, data_root: Path, out_dir: Path, probe_only: bool = False) -> None:
+def _save_checkpoint(
+    path: Path,
+    epoch: int,
+    model: nn.Module,
+    ema: EMA,
+    opt: AdamW,
+    sched,
+    scaler,
+    cfg,
+    val_stsnr: float,
+    best_val: float,
+    bad_epochs: int,
+    global_step: int,
+) -> None:
+    """Atomically write a checkpoint (write to .tmp then rename).
+
+    Atomic rename prevents a half-written file from corrupting a resume.
+    All fields needed to fully resume training are included.
+    """
+    ckpt = {
+        "epoch": epoch,
+        "model": model.state_dict(),
+        "ema": ema.shadow,
+        "opt": opt.state_dict(),
+        "sched": sched.state_dict(),
+        "scaler": scaler.state_dict(),
+        "cfg": cfg.to_dict(),
+        # Resume state
+        "val_stsnr": val_stsnr,
+        "best_val": best_val,
+        "bad_epochs": bad_epochs,
+        "global_step": global_step,
+    }
+    tmp = path.with_suffix(".tmp")
+    torch.save(ckpt, tmp)
+    tmp.rename(path)          # atomic on POSIX; safe on Windows with same filesystem
+
+
+def _load_checkpoint(
+    path: Path,
+    model: nn.Module,
+    ema: EMA,
+    opt: AdamW,
+    sched,
+    scaler,
+    device: torch.device,
+) -> dict:
+    """Load a checkpoint and restore all stateful objects in-place.
+
+    Returns the raw checkpoint dict so the caller can extract scalars
+    (epoch, best_val, bad_epochs, global_step, val_stsnr).
+    """
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    if "ema" in ckpt and ckpt["ema"]:
+        ema.shadow.update(ckpt["ema"])
+    opt.load_state_dict(ckpt["opt"])
+    sched.load_state_dict(ckpt["sched"])
+    if "scaler" in ckpt:
+        scaler.load_state_dict(ckpt["scaler"])
+    return ckpt
+
+
+def train(cfg, data_root: Path, out_dir: Path,
+          probe_only: bool = False, no_resume: bool = False) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -316,22 +380,49 @@ def train(cfg, data_root: Path, out_dir: Path, probe_only: bool = False) -> None
 
     step_fn = STEP_REGISTRY[cfg.model.name]
 
-    # ── Probe (always run; catches path/shape/NaN failures cheaply) ──────────
-    print("\n[probe] Running 4-batch sanity check …", flush=True)
-    _probe(model, train_loader, step_fn, cfg, device, opt, scaler, n_batches=4)
-    log.log(kind="probe-ok", loss_name=cfg.loss.name)
-    if probe_only:
-        print("[probe] --probe-only: exiting after successful probe.", flush=True)
-        log.log(kind="probe-only-exit")
-        log.close()
-        return
-
-    best_val = -math.inf
-    bad_epochs = 0
+    # ── Resume ────────────────────────────────────────────────────────────────
+    start_epoch = 0
+    best_val    = -math.inf
+    bad_epochs  = 0
     global_step = 0
+    resumed     = False
+
+    last_ckpt = out_dir / "last.pt"
+    if not no_resume and last_ckpt.exists():
+        print(f"\n[resume] Found checkpoint: {last_ckpt}", flush=True)
+        ckpt = _load_checkpoint(last_ckpt, model, ema, opt, sched, scaler, device)
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        best_val    = float(ckpt.get("best_val",   ckpt.get("val_stsnr", -math.inf)))
+        bad_epochs  = int(ckpt.get("bad_epochs",   0))
+        global_step = int(ckpt.get("global_step",  0))
+        resumed     = True
+        log.log(kind="resumed", from_epoch=start_epoch - 1, best_val=best_val,
+                bad_epochs=bad_epochs, global_step=global_step)
+        print(f"[resume] Resuming from epoch {start_epoch}  "
+              f"(best_val={best_val:+.3f}, bad_epochs={bad_epochs})", flush=True)
+        if start_epoch >= cfg.training.epochs:
+            print(f"[resume] Already completed {cfg.training.epochs} epochs. "
+                  "Use --no-resume to re-train from scratch.", flush=True)
+            log.log(kind="already-done", epochs=cfg.training.epochs)
+            log.close()
+            return
+
+    # ── Probe (skip when resuming — pipeline was already validated) ───────────
+    if not resumed:
+        print("\n[probe] Running 4-batch sanity check …", flush=True)
+        _probe(model, train_loader, step_fn, cfg, device, opt, scaler, n_batches=4)
+        log.log(kind="probe-ok", loss_name=cfg.loss.name)
+        if probe_only:
+            print("[probe] --probe-only: exiting after successful probe.", flush=True)
+            log.log(kind="probe-only-exit")
+            log.close()
+            return
+    else:
+        print("[probe] Skipped (resuming from checkpoint).", flush=True)
+
     log_every = cfg.training.log_every
 
-    for epoch in range(cfg.training.epochs):
+    for epoch in range(start_epoch, cfg.training.epochs):
         model.train()
         t0 = time.time()
         running = 0.0
@@ -376,7 +467,30 @@ def train(cfg, data_root: Path, out_dir: Path, probe_only: bool = False) -> None
         avg_loss = running / max(1, count)
         log.log(kind="epoch", epoch=epoch, train_loss=avg_loss, dt_sec=dt)
 
-        # Validation with EMA weights.
+        # ── Save last.pt unconditionally after every epoch ────────────────────
+        # This ensures a crash at any point can be resumed from the last
+        # completed epoch, even when validation is skipped (data not found).
+        val_metric = float("-inf")   # updated below if validation runs
+        _save_checkpoint(
+            out_dir / "last.pt",
+            epoch, model, ema, opt, sched, scaler, cfg,
+            val_stsnr=val_metric,
+            best_val=best_val,
+            bad_epochs=bad_epochs,
+            global_step=global_step,
+        )
+        if (epoch + 1) % cfg.training.ckpt_every == 0:
+            _save_checkpoint(
+                out_dir / f"epoch_{epoch + 1:04d}.pt",
+                epoch, model, ema, opt, sched, scaler, cfg,
+                val_stsnr=val_metric,
+                best_val=best_val,
+                bad_epochs=bad_epochs,
+                global_step=global_step,
+            )
+            log.log(kind="checkpoint", epoch=epoch, path=f"epoch_{epoch + 1:04d}.pt")
+
+        # ── Validation with EMA weights ───────────────────────────────────────
         val_dir = data_root.parent / "val"
         ref_path = val_dir / f"{cfg.data.ref_stack}.tif"
         if not ref_path.exists():
@@ -409,27 +523,36 @@ def train(cfg, data_root: Path, out_dir: Path, probe_only: bool = False) -> None
         finally:
             model.load_state_dict({**model.state_dict(), **backup})
 
-        # Checkpoint + early stopping.
-        ckpt = {
-            "epoch": epoch,
-            "model": model.state_dict(),
-            "ema": ema.shadow,
-            "opt": opt.state_dict(),
-            "sched": sched.state_dict(),
-            "cfg": cfg.to_dict(),
-            "val_stsnr": val_metric,
-        }
-        torch.save(ckpt, out_dir / "last.pt")
+        # ── Update last.pt with actual val_metric, then early stop ───────────
         if val_metric > best_val:
             best_val = val_metric
             bad_epochs = 0
-            torch.save(ckpt, out_dir / "best.pt")
+            _save_checkpoint(
+                out_dir / "best.pt",
+                epoch, model, ema, opt, sched, scaler, cfg,
+                val_stsnr=val_metric,
+                best_val=best_val,
+                bad_epochs=bad_epochs,
+                global_step=global_step,
+            )
             log.log(kind="best", epoch=epoch, stSNR=val_metric)
         else:
             bad_epochs += 1
             if bad_epochs >= cfg.training.early_stop.patience:
                 log.log(kind="early-stop", bad_epochs=bad_epochs, best_stSNR=best_val)
                 break
+
+        # Overwrite last.pt with the updated bad_epochs / best_val so resume
+        # restores the correct early-stopping state.
+        _save_checkpoint(
+            out_dir / "last.pt",
+            epoch, model, ema, opt, sched, scaler, cfg,
+            val_stsnr=val_metric,
+            best_val=best_val,
+            bad_epochs=bad_epochs,
+            global_step=global_step,
+        )
+
     log.log(kind="train-done", best_stSNR=best_val)
     log.close()
 
