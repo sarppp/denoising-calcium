@@ -135,6 +135,8 @@ We rescaled a clean patch to different effective gains and measured stSNR degrad
 
 A model trained at gain≈35 and tested at gain≈1299 (F3, OOD Task 2) without augmentation would fail completely. **Log-uniform gain augmentation per patch during training** — `g ~ LogUniform([20, 2000])` — forces the network to generalise to every gain level. Log-uniform (not linear uniform) is critical: linear sampling under-represents low-gain patches where the range is wide.
 
+**Implementation detail — per-sample gain tensor (fixed):** Earlier code shared a single `NoiseParams` scalar across the whole batch. Augmented samples (gain≈991) trained on a low-gain stack (gain≈28) had their Anscombe inverse applied with the wrong gain, scaling their gradient contribution by `k = g_true/g_aug ≈ 1/35`. High-gain augmented samples were nearly invisible to the optimizer — the augmentation existed in the data but not in the loss. Fixed: `_make_params()` now returns a per-sample `(B,)` gain tensor that is passed through all five model `forward()` calls and used for both `pred` and `tgt_raw`. Every augmented sample now contributes its full gradient weight regardless of gain level.
+
 ---
 
 ### Notebook 10 — Why the Noise Model Doesn't Fit Val Stacks
@@ -306,9 +308,15 @@ See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for a full audit. Summary of the most i
 - MAE loss silently fell through to NLL when `loss.name: mae` was set
 - Resume support was absent — any crash required restarting from scratch
 - `huber` loss was not implemented — also silently fell through to NLL
+- **Gain augmentation was silently muted for OOD samples (LIMITATION-01, now fixed):**
+  all 5 model `forward()` calls shared one scalar gain, so augmented samples
+  (g_aug≫g_true) had their Anscombe inverse applied with the wrong gain.
+  Loss was scaled by k = g_true/g_aug — as small as 1/35 for g_aug=991 vs g_true=28.
+  High-gain augmented samples (the ones meant to teach F3 generalization) contributed
+  almost nothing to the gradient. Fixed by passing a per-sample `(B,)` gain tensor
+  through `_make_params()` and all model `forward()` signatures.
 
 **Known limitations:**
-- `_make_params` uses batch-median gain for the Anscombe inverse — approximate when gain augmentation is active (batch samples have different gains)
 - `_is_3d_model` in `eval.py` uses class-name string matching — must be updated when adding new 3-D models
 
 ---
