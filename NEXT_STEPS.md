@@ -235,14 +235,16 @@ uv run cidc train configs/mamba3d.yaml       --data $DATA --out $RUNS/mamba_base
 uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba_large
 ```
 
-Read the verdict on **both** F1 and F3:
+Read the verdict (F1 primary, F3 OOD — both in one command):
 ```bash
-uv run python scripts/ablation_verdict.py \
-    $RUNS/n2v3d_base $RUNS/n2v3d_large $RUNS/mamba_base $RUNS/mamba_large --stack F1
-
-uv run python scripts/ablation_verdict.py \
-    $RUNS/n2v3d_base $RUNS/n2v3d_large $RUNS/mamba_base $RUNS/mamba_large --stack F3
+uv run python scripts/model_verdict.py \
+    $RUNS/n2v3d_base $RUNS/n2v3d_large $RUNS/mamba_base $RUNS/mamba_large \
+    --stack F1 --also F3
 ```
+
+Note: use `model_verdict.py`, **not** `ablation_verdict.py` — the ablation script
+identifies runs by loss name (all 4 would show as "huber"). `model_verdict.py`
+identifies runs by directory name and applies model-specific decision rules.
 
 **Decision rules:**
 - Large wins base by **>1 dB** on F1 → use large; otherwise use base
