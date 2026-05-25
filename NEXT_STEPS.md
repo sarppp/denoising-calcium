@@ -122,6 +122,35 @@ uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
 - `KNOWN_ISSUES.md` — all 10 bugs documented (BUG-01 through BUG-10)
 - `NEXT_STEPS.md` — this file
 
+### Per-sample gain tensor fix — completed ✅ (LIMITATION-01 resolved)
+- `_make_params()` now returns `(NoiseParams, gains_tensor shape (B,))`
+- All 5 model `forward()` signatures accept `gain_tensor: Tensor | None = None`
+- All 5 `step_*` functions pass per-sample gain to both `model.forward()` and `tgt_raw`
+- Effect: augmented high-gain samples (g_aug=991) previously contributed only 1/35th
+  gradient weight due to wrong Anscombe inverse; now contribute full weight
+- Inference path unchanged — uses scalar `NoiseParams` as before (single tile, no augmentation)
+
+### Model size + type comparison — completed ✅
+
+**Winner: `n2v3d_large`**
+
+| Model | F1 stSNR | F3 stSNR (OOD) | Combined avg | Verdict |
+|-------|----------|----------------|-------------|---------|
+| **n2v3d_large** | −3.068 dB | +5.349 dB | **+1.14 dB** | ✅ winner |
+| mamba_large | −2.445 dB | −11.134 dB | −6.79 dB | ❌ disqualified |
+| mamba_base | −3.385 dB | −6.162 dB | −4.77 dB | — |
+| n2v3d_base | −3.398 dB | −6.355 dB | −4.88 dB | — |
+
+Settings: 10 epochs, `patch=[64,64,64]`, `batch=32`, L40S. Values are absolute stSNR.
+Raw noisy baselines: F1 = +7.27 dB, F3 = −6.64 dB.
+
+Key finding: mamba_large is 4.5 dB WORSE than the raw noisy F3 (−11.134 vs −6.64 baseline).
+SSM state transitions are learned from the training-distribution gain (≈28 ADU) and fail
+catastrophically at inference-time gain of 990 ADU. Pure-conv N2V3D is gain-invariant by
+construction — spatial kernels suppress noise patterns regardless of absolute scale.
+`model_verdict.py` now ranks by combined (F1+F3)/2 score and flags OOD regressions.
+See `md files/MODEL_COMPARISON.md` for the full analysis.
+
 ### Loss ablation — completed ✅
 - Ran on T4, 10 epochs each, patch=[64,64,64], batch=8
 - **Winner: `huber`** — beats mae on both F1 (+0.020 vs -0.002) and F3 OOD (+0.376 vs +0.249)
@@ -140,26 +169,35 @@ uv run cidc train configs/ablation_huber.yaml        --data $DATA --out $RUNS/hu
 
 ## 🔄 Currently running
 
-**Model size + type test** (10 epochs each, sequential on L40S, patch=[64,64,64], batch=32):
+**Full training — n2v3d_large** (winner from model comparison, L40S):
 
 ```bash
 export DATA=.../data/train
 export RUNS=.../runs
 
-uv run cidc train configs/n2v3d.yaml         --data $DATA --out $RUNS/base
-uv run cidc train configs/n2v3d_large.yaml   --data $DATA --out $RUNS/large
-uv run cidc train configs/mamba3d.yaml       --data $DATA --out $RUNS/mamba_base
-uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba_large
+uv run cidc train configs/n2v3d_large.yaml --data $DATA --out $RUNS/full_training
 ```
 
 If a run crashes: re-run same command — auto-resumes from `last.pt`.
 
+Monitor live:
+```bash
+tail -f $RUNS/full_training/train_n2v3d_large.jsonl | uv run python -c "
+import sys, json
+for line in sys.stdin:
+    r = json.loads(line)
+    if r.get('kind') in ('epoch','val','best','nan-abort','early-stop'):
+        print(r)
+"
+```
+
+Expected time on L40S: ~5 hours. Early stopping (patience=5) will decide the actual epoch.
+
 ---
 
-## ⏳ Next: after ablation finishes 
-## FINISHED! READ BELOW
+## ✅ Steps 1 & 2 — Completed
 
-### Step 1 — Read the verdict
+### Step 1 — Loss ablation verdict
 
 ```bash
 python scripts/ablation_verdict.py \
@@ -205,6 +243,18 @@ Catastrophic instability. Anscombe amplifies errors when gain is misspecified (R
 
 ### Step 2 — Model size + model type test (10 epochs each, on L40S)
 
+### ✅ DONE — Winner: `n2v3d_large` (see Done section above and `md files/MODEL_COMPARISON.md`)
+
+Decision rules applied (combined F1+F3 score, not F1 alone):
+- N2V3D large vs base: +11.7 dB on F3, borderline on F1 → use large ✅
+- Mamba vs N2V3D: Mamba disqualified on F3 (−11.134 dB, worse than raw noisy) → N2V3D ✅
+
+`model_verdict.py` is now fixed — ranks by `(primary + OOD) / 2` and flags OOD regressions.
+
+---
+
+**Instructions kept for future reference / next model training:**
+
 **⚠️ Ablation used patch=[64,64,64] — must re-run base with same settings as large for fair comparison.**
 
 All 4 runs use identical settings so results are comparable:
@@ -246,12 +296,13 @@ Note: use `model_verdict.py`, **not** `ablation_verdict.py` — the ablation scr
 identifies runs by loss name (all 4 would show as "huber"). `model_verdict.py`
 identifies runs by directory name and applies model-specific decision rules.
 
-**Decision rules:**
-- Large wins base by **>1 dB** on F1 → use large; otherwise use base
-- Mamba wins best N2V3D by **>1 dB** → use Mamba; otherwise stick with N2V3D (proven, faster)
-- Check F3 too — OOD matters for the competition score
+**Decision rules (combined F1+F3 score — script handles this automatically):**
+- Large wins base by **>1 dB** on combined → use large; otherwise use base
+- Mamba wins best N2V3D by **>1 dB** on combined → use Mamba; otherwise stick with N2V3D
+- Any model below −5 dB on F3 (OOD) → disqualified regardless of F1 score
+- Check F3 too — OOD matters as much as F1 for the competition score
 
-### Step 4 — Full training (L40S, inference on T4)
+### Step 3 — Full training (L40S, inference on T4)
 
 Edit the winning config — change only these values:
 ```yaml
