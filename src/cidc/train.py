@@ -208,6 +208,14 @@ STEP_REGISTRY: dict[str, Callable[[nn.Module, dict[str, Any], Any], Tensor]] = {
 
 
 # --------------------------------------------------------------------------- #
+# Constants                                                                   #
+# --------------------------------------------------------------------------- #
+
+# Maximum number of non-finite (NaN / Inf) loss steps before the run is
+# aborted early.  Matching UNSTABLE_NAN_LIMIT in scripts/ablation_verdict.py.
+NAN_ABORT_LIMIT: int = 5
+
+# --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -447,6 +455,7 @@ def train(cfg, data_root: Path, out_dir: Path,
         print("[probe] Skipped (resuming from checkpoint).", flush=True)
 
     log_every = cfg.training.log_every
+    nan_step_count = 0   # cumulative across all epochs; abort at NAN_ABORT_LIMIT
 
     for epoch in range(start_epoch, cfg.training.epochs):
         model.train()
@@ -461,6 +470,37 @@ def train(cfg, data_root: Path, out_dir: Path,
                     loss = step_fn(model, batch, cfg)
             else:
                 loss = step_fn(model, batch, cfg)
+
+            # ── NaN / Inf guard ───────────────────────────────────────────────
+            # Check BEFORE dividing by grad_accum and BEFORE backward so we
+            # never propagate non-finite gradients into the model weights.
+            if not torch.isfinite(loss):
+                nan_step_count += 1
+                log.log(
+                    kind="nan-step",
+                    epoch=epoch,
+                    step=global_step,
+                    loss_name=cfg.loss.name,
+                    nan_count=nan_step_count,
+                    loss=float(loss.item()),
+                )
+                opt.zero_grad(set_to_none=True)   # discard any partial gradient
+                if nan_step_count >= NAN_ABORT_LIMIT:
+                    log.log(
+                        kind="nan-abort",
+                        epoch=epoch,
+                        step=global_step,
+                        loss_name=cfg.loss.name,
+                        nan_count=nan_step_count,
+                        msg=(
+                            f"{nan_step_count} non-finite loss steps exceeded "
+                            f"NAN_ABORT_LIMIT={NAN_ABORT_LIMIT}. "
+                            "Run aborted — try a more stable loss (anscombe_mse or mae)."
+                        ),
+                    )
+                    log.close()
+                    return
+                continue   # skip backward for this batch, move to next
 
             loss = loss / cfg.training.grad_accum
             if scaler.is_enabled():

@@ -144,13 +144,21 @@ def _parse_run(run_dir: Path) -> dict:
     cfg_name  = "?"
     loss_name = "?"
     nan_count = 0
+    aborted   = False
     for r in rows:
         if r.get("kind") == "train-start":
             cfg_name = r.get("cfg_name", "?")
         if r.get("kind") == "probe-ok":
             loss_name = r.get("loss_name", "?")
-        if r.get("kind") == "step" and not _isfinite(r.get("loss", 1.0)):
+        # "nan-step" rows are written once per non-finite loss step (reliable).
+        # Fallback: also catch old-format runs that logged NaN via kind="step".
+        if r.get("kind") == "nan-step":
+            nan_count = max(nan_count, int(r.get("nan_count", nan_count + 1)))
+        elif r.get("kind") == "step" and not _isfinite(r.get("loss", 1.0)):
             nan_count += 1
+        if r.get("kind") == "nan-abort":
+            aborted = True
+            nan_count = max(nan_count, int(r.get("nan_count", nan_count)))
 
     # Infer loss from config name if probe-ok row is absent.
     if loss_name == "?" and cfg_name != "?":
@@ -174,6 +182,7 @@ def _parse_run(run_dir: Path) -> dict:
         "epoch_loss":    epoch_loss,
         "val":           val,
         "nan_count":     nan_count,
+        "aborted":       aborted,
         "epochs_logged": sorted(epoch_loss.keys()),
     }
 
@@ -257,34 +266,42 @@ def _verdict(runs: list[dict], stack: str, compare_epoch: int = -1) -> None:
     print(" ABLATION VERDICT")
     print("═" * 72)
 
-    # Gather final stSNR and NaN counts per run.
-    scores: dict[str, float] = {}
-    nans:   dict[str, int]   = {}
-    stable: dict[str, bool]  = {}
+    # Gather final stSNR, NaN counts, and abort flags per run.
+    scores:   dict[str, float] = {}
+    nans:     dict[str, int]   = {}
+    stable:   dict[str, bool]  = {}
+    aborted:  dict[str, bool]  = {}
     for r in runs:
         v   = _last_val(r, stack, compare_epoch)
         ln  = r["loss_name"]
         sc  = v.get("stSNR", float("nan"))
         nc  = r["nan_count"]
-        is_stable = nc < UNSTABLE_NAN_LIMIT and _isfinite(sc)
-        scores[ln] = sc
-        nans[ln]   = nc
-        stable[ln] = is_stable
+        ab  = r.get("aborted", False)
+        is_stable = nc < UNSTABLE_NAN_LIMIT and _isfinite(sc) and not ab
+        scores[ln]  = sc
+        nans[ln]    = nc
+        stable[ln]  = is_stable
+        aborted[ln] = ab
 
     # Print score table.
     col = 26
-    print(f"\n  {'Loss':<{col}}  {'val_' + stack + '_stSNR':>14}  {'NaN steps':>10}  {'Stable':>6}")
-    print(f"  {'─'*col}  {'─'*14}  {'─'*10}  {'─'*6}")
+    print(f"\n  {'Loss':<{col}}  {'val_' + stack + '_stSNR':>14}  {'NaN steps':>10}  {'Status':>9}")
+    print(f"  {'─'*col}  {'─'*14}  {'─'*10}  {'─'*9}")
     for r in sorted(runs, key=lambda r: scores.get(r["loss_name"], float("-inf")), reverse=True):
         ln  = r["loss_name"]
         sc  = scores.get(ln, float("nan"))
         sc_s = f"{sc:+.3f} dB" if _isfinite(sc) else "         ?"
-        ok   = "✅" if stable.get(ln) else "🔴"
-        print(f"  {ln:<{col}}  {sc_s:>14}  {nans.get(ln, 0):>10}  {ok:>6}")
+        if aborted.get(ln):
+            status = "🔴ABORTED"
+        elif stable.get(ln):
+            status = "✅ stable"
+        else:
+            status = "⚠ unstable"
+        print(f"  {ln:<{col}}  {sc_s:>14}  {nans.get(ln, 0):>10}  {status:>9}")
 
-    # Filter to stable runs only.
+    # Filter to stable (non-aborted) runs only.
     stable_scores = {ln: sc for ln, sc in scores.items()
-                     if stable.get(ln, False) and _isfinite(sc)}
+                     if stable.get(ln, False) and _isfinite(sc) and not aborted.get(ln, False)}
 
     print("\n  Decision:")
 
