@@ -112,68 +112,93 @@ Look for:
 - `🔴ABORTED` — NLL blew up, definitely use the recommended alternative
 - Trend: "still-dropping" → run 100 epochs; "flat" at epoch 7-8 → 50 epochs enough
 
-### Step 2 — Model size ablation (recommended, ~1 hour each)
+### Step 2 — Model size test: N2V3D base vs large (10 epochs, ~20 min each on L40S)
 
-Compare base (0.5M params) vs large (4M params) with the winning loss.
-Edit `loss.name` in each config to match the ablation winner first.
+**Shortcut:** The ablation already ran N2V3D base for 10 epochs.
+Use the winning ablation run as your base reference — no need to re-run it.
+Only run `n2v3d_large` fresh.
+
+Before running, edit `n2v3d_large.yaml`:
+```yaml
+loss:
+  name: <winner from Step 1>   # e.g. mae, anscombe_mse, huber ...
+# epochs: 10 is already set in the config
+```
 
 ```bash
-# Run base and large in parallel if you have 2 GPUs, or sequentially:
-uv run cidc train configs/n2v3d.yaml       --data $DATA --out $RUNS/n2v3d_base
 uv run cidc train configs/n2v3d_large.yaml --data $DATA --out $RUNS/n2v3d_large
 ```
 
-Decision rule:
-- Large wins F1 stSNR by >1 dB → use large for full training
-- Large ties base (within 1 dB) → use base (faster, less overfitting risk on A1/B1)
-
-Model specs:
-| Config | base_ch | depth | Params | Batch | grad_accum | Effective batch |
-|--------|---------|-------|--------|-------|------------|----------------|
-| n2v3d.yaml | 16 | 3 | ~0.5M | 8 | 2 | 16 |
-| n2v3d_large.yaml | 32 | 4 | ~4M | 8 | 2 | 16 |
-
-### Step 3 — Mamba3D (optional, only if time allows)
-
-Mamba SSM bottleneck handles long-range temporal dependencies in O(T) vs O(T²).
-Potentially better tSNR on long calcium transients (τ₀.₅=46 frames).
-
-First check Mamba is installed:
+Then compare with verdict script:
 ```bash
-uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
+uv run python scripts/ablation_verdict.py \
+    $RUNS/<winning_ablation_arm> $RUNS/n2v3d_large \
+    --stack F1
 ```
 
-If that works, run both Mamba configs with the winning loss:
+**Decision rule:**
+- Large wins F1 stSNR by **>1 dB** → use large for full training
+- Large ties or loses (within 1 dB) → stick with base (faster, less overfitting risk)
+
+| Config | Params | T4 batch | T4 time/10ep | L40S batch | L40S time/10ep |
+|--------|--------|----------|-------------|------------|----------------|
+| n2v3d.yaml | ~0.5M | 8, accum=2 | ~50 min | 16, accum=1 | ~10 min |
+| n2v3d_large.yaml | ~4M | 8, accum=2 | ~80 min | 16, accum=1 | ~15 min |
+
+### Step 3 — Mamba3D test (optional, only if N2V3D large wins or time allows)
+
+Mamba SSM bottleneck models long-range temporal dependencies in O(T) vs O(T²).
+Potentially better tSNR on long calcium transients (τ₀.₅=46 frames).
+Only worth trying if you have time — N2V3D is proven to work.
+
+**First check Mamba is installed:**
 ```bash
-# Edit loss.name in both configs to match ablation winner first
+uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
+# If this fails: uv pip install -e '.[mamba]'   (needs nvcc in PATH)
+```
+
+Before running, edit `loss.name` in both mamba configs to the ablation winner.
+Both already have `epochs: 10` set.
+
+```bash
 uv run cidc train configs/mamba3d.yaml       --data $DATA --out $RUNS/mamba3d_base
 uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba3d_large
 ```
 
-If import fails: Mamba needs CUDA extensions (`pip install mamba-ssm`). Skip and
-stick with N2V3D if time is short — N2V3D is proven to work.
-
-Model specs:
-| Config | base_ch | depth | SSM layers | Batch | grad_accum |
-|--------|---------|-------|------------|-------|------------|
-| mamba3d.yaml | 16 | 3 | 2 | 8 | 2 |
-| mamba3d_large.yaml | 32 | 4 | 4 | 4 | 4 |
-
-### Step 4 — Full training
-
-After choosing model + loss, run 100 epochs:
-
+Compare all 4 at once:
 ```bash
-# Edit configs/n2v3d.yaml (or n2v3d_large.yaml):
-#   loss.name: <winner from ablation>
-#   epochs: 100
-
-uv run cidc train configs/n2v3d.yaml --data $DATA --out $RUNS/n2v3d_full
+uv run python scripts/ablation_verdict.py \
+    $RUNS/<winning_ablation_arm> $RUNS/n2v3d_large \
+    $RUNS/mamba3d_base $RUNS/mamba3d_large \
+    --stack F1
 ```
 
-Monitor:
+**Decision rule:** pick Mamba only if it beats the best N2V3D by >1 dB — it is slower per step.
+
+| Config | Params | SSM layers | T4 batch | L40S batch |
+|--------|--------|------------|----------|------------|
+| mamba3d.yaml | ~1M | 2 | 8, accum=2 | 16, accum=1 |
+| mamba3d_large.yaml | ~4M | 4 | 4, accum=4 | 8, accum=1 |
+
+### Step 4 — Full training (100 epochs, winning model + loss)
+
+Edit the winning config:
+```yaml
+loss:
+  name: <winner>        # from Step 1
+training:
+  epochs: 100           # was 10 for testing
+# If on L40S, also uncomment the L40S block at the bottom of the config
+```
+
 ```bash
-tail -f $RUNS/n2v3d_full/train_n2v3d.jsonl | python -c "
+# Replace n2v3d_large with whichever model won Steps 2-3
+uv run cidc train configs/n2v3d_large.yaml --data $DATA --out $RUNS/full_training
+```
+
+Monitor live:
+```bash
+tail -f $RUNS/full_training/train_n2v3d_large.jsonl | uv run python -c "
 import sys, json
 for line in sys.stdin:
     r = json.loads(line)
@@ -182,7 +207,12 @@ for line in sys.stdin:
 "
 ```
 
-Expected time: ~10 hours on T4 (2000 samples × 100 epochs × ~6 min/epoch).
+Expected time:
+| GPU | N2V3D base | N2V3D large |
+|-----|-----------|-------------|
+| T4 | ~8 h | ~12 h |
+| L40S (patch=[64,128,128]) | ~2 h | ~3 h |
+| L40S (patch=[128,128,128]) | ~3 h | ~5 h |
 
 ---
 

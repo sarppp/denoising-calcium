@@ -41,9 +41,9 @@ model:
     bidirectional: true
 
 data:
-  patch:       [64, 128, 128]
-  stride:      [16, 64, 64]
-  batch_size:  4             # Mamba bottleneck uses more memory; halved again
+  patch:       [64, 128, 128]   # T4 default — change to [128,128,128] on L40S (see below)
+  stride:      [16, 64, 64]     # on L40S with patch=[128,128,128]: use [32,64,64]
+  batch_size:  4                # T4: 4 (Mamba needs more VRAM) | L40S: 8
   num_workers: 4
   samples_per_epoch: 2000
   train_stacks: [A1, B1, C2, D2]
@@ -60,17 +60,28 @@ training:
   weight_decay: 1.0e-4
   scheduler: cosine_restarts
   restarts: 3
-  epochs: 100
+  epochs: 10    # ← 10 for model-size test; change to 100 for full training
   warmup_steps: 500
   grad_clip: 1.0
-  grad_accum: 4            # effective batch = 4 × 4 = 16
-  grad_ckpt: true
+  grad_accum: 4            # T4: 4 (4×4=16 effective) | L40S: change to 1, batch_size: 16
+  grad_ckpt: true          # T4: true (needed at depth=4) | L40S: false
   ema_decay: 0.999
   amp: true
   seed: 0
   log_every: 50
   ckpt_every: 5
   early_stop: { metric: stsnr_val, patience: 10, higher_is_better: true }
+
+# ── L40S (48 GB) full recipe ──────────────────────────────────────────────────
+# data:
+#   patch:      [128, 128, 128]
+#   stride:     [32, 64, 64]
+#   batch_size: 8
+# training:
+#   epochs:     100
+#   grad_accum: 1
+#   grad_ckpt:  false
+# ─────────────────────────────────────────────────────────────────────────────
 
 loss:
   name: poisson_gaussian_nll   # ← REPLACE with winning loss from ablation_verdict.py

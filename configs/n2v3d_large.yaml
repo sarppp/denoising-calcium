@@ -35,9 +35,9 @@ model:
     pool:     2
 
 data:
-  patch:       [64, 128, 128]
-  stride:      [16, 64, 64]
-  batch_size:  8            # halved vs base to compensate for 2× larger model
+  patch:       [64, 128, 128]   # T4 default — change to [128,128,128] on L40S (see below)
+  stride:      [16, 64, 64]     # on L40S with patch=[128,128,128]: use [32,64,64]
+  batch_size:  8                # T4: 8 | A10G/RTX3090: 16 | A100 40GB: 32 | L40S: 16
   num_workers: 4
   samples_per_epoch: 2000
   train_stacks: [A1, B1, C2, D2]
@@ -54,17 +54,28 @@ training:
   weight_decay: 1.0e-4
   scheduler: cosine_restarts
   restarts: 3
-  epochs: 100
+  epochs: 10    # ← 10 for model-size test; change to 100 for full training
   warmup_steps: 500
   grad_clip: 1.0
-  grad_accum: 2            # effective batch = 8 × 2 = 16 (same as base config)
-  grad_ckpt: true          # ~40% memory saving, ~20% speed cost — needed at depth=4
+  grad_accum: 2            # T4: 2 | L40S/A100: change to 1 and raise batch_size
+  grad_ckpt: true          # T4: true (saves ~40% VRAM, costs ~20% speed) | L40S: false
   ema_decay: 0.999
   amp: true
   seed: 0
   log_every: 50
   ckpt_every: 5
   early_stop: { metric: stsnr_val, patience: 10, higher_is_better: true }
+
+# ── L40S (48 GB) full recipe ──────────────────────────────────────────────────
+# data:
+#   patch:      [128, 128, 128]
+#   stride:     [32, 64, 64]
+#   batch_size: 16
+# training:
+#   epochs:     100
+#   grad_accum: 1
+#   grad_ckpt:  false
+# ─────────────────────────────────────────────────────────────────────────────
 
 loss:
   name: poisson_gaussian_nll   # ← REPLACE with winning loss from ablation_verdict.py

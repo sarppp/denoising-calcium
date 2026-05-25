@@ -21,7 +21,7 @@ model:
 data:
   patch:       [64, 128, 128]
   stride:      [16, 64, 64]
-  batch_size:  8                         # 8 × grad_accum=2 → effective 16; fits T4 16GB at [64,128,128]
+  batch_size:  8                         # T4: 8 | L40S: 16
   num_workers: 4
   samples_per_epoch: 2000               # 2000÷8=250 steps/epoch; 100 epochs ≈ ~10h on T4
   train_stacks: [A1, B1, C2, D2]
@@ -38,11 +38,11 @@ training:
   weight_decay: 1.0e-4
   scheduler: cosine_restarts
   restarts: 3
-  epochs: 100
+  epochs: 10    # ← 10 for model-size test; change to 100 for full training
   warmup_steps: 1000                     # longer warmup helps Mamba converge
   grad_clip: 1.0
-  grad_accum: 2                          # effective_batch = 8 × 2 = 16; reduces peak VRAM vs batch=16
-  grad_ckpt:  false
+  grad_accum: 2                          # T4: 2 (8×2=16 effective) | L40S: change to 1, batch_size: 16
+  grad_ckpt:  false                      # fine for base model; set true only if OOM
   ema_decay: 0.999
   amp: true
   seed: 0
