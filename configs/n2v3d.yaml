@@ -44,6 +44,7 @@ data:
   stride:      [16, 64, 64]              # patch stride over each stack
   batch_size:  16
   num_workers: 4
+  samples_per_epoch: 2000                 # 2000÷16=125 steps/epoch; 100 epochs ≈ 10h on T4
   train_stacks: [A1, B1, C2, D2]         # train only on training stacks
   ref_stack:   F0                          # clean ground truth — scored against, never trained on
   val_stacks:  [F1, F2, F3]               # noisy stacks; F3=OOD Task-2 (gain≈991)
@@ -100,5 +101,5 @@ inference:
   tile:    [64, 128, 128]                # match data.patch
   overlap: [16, 16, 16]                  # must divide tile evenly-ish
   tta:
-    rotations: 4                         # 1 | 2 | 4  (90° rotations of H×W)
-    flips:     true                      # pair with rotations → up to ×8
+    rotations: 4                         # 4 × 90° rotations in H×W → 4 augmentations
+    flips:     true                      # also flip H → 4×2 = 8 augmentations (D4 group)

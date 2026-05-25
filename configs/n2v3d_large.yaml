@@ -1,0 +1,80 @@
+# N2V3D large model — for model-size ablation after loss ablation.
+#
+# Motivation
+# ----------
+# The base config (n2v3d.yaml) uses base_ch=16, depth=3 → ~0.5M params.
+# This is small for a 3-D denoising problem. Larger models have more
+# representational capacity to separate signal from noise, especially
+# at the bottleneck where temporal context is integrated.
+#
+# base_ch=32, depth=4 → ~4M params — 8× more capacity.
+# Fits on 16GB T4 with batch_size=8 and grad_ckpt=true.
+#
+# When to use
+# -----------
+# 1. After the 5-arm loss ablation finishes, copy the winning loss.name
+#    here and run a 10-epoch comparison: n2v3d (base) vs n2v3d_large.
+# 2. If large wins by >1 dB on val_F1_stSNR, use it for the full run.
+# 3. If large wins by <1 dB or ties: stick with base (faster, less risk
+#    of overfitting on only A1/B1 training data).
+#
+# Memory note
+# -----------
+# Peak VRAM with patch=[64,128,128], batch=8, grad_ckpt=true: ~10–12 GB.
+# Fits T4 (16GB). If OOM: reduce batch_size to 4 or enable grad_ckpt.
+
+name: n2v3d_large
+
+model:
+  name: n2v3d
+  kwargs:
+    in_ch:    1
+    base_ch:  32           # 2× base (16→32), 8× more params overall
+    depth:    4            # extra resolution level; wider bottleneck
+    kernel:   3
+    pool:     2
+
+data:
+  patch:       [64, 128, 128]
+  stride:      [16, 64, 64]
+  batch_size:  8            # halved vs base to compensate for 2× larger model
+  num_workers: 4
+  samples_per_epoch: 2000
+  train_stacks: [A1, B1, C2, D2]
+  ref_stack:   F0
+  val_stacks:  [F1, F2, F3]
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip: true
+  rot90: true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 3
+  epochs: 100
+  warmup_steps: 500
+  grad_clip: 1.0
+  grad_accum: 2            # effective batch = 8 × 2 = 16 (same as base config)
+  grad_ckpt: true          # ~40% memory saving, ~20% speed cost — needed at depth=4
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 50
+  ckpt_every: 5
+  early_stop: { metric: stsnr_val, patience: 10, higher_is_better: true }
+
+loss:
+  name: poisson_gaussian_nll   # ← REPLACE with winning loss from ablation_verdict.py
+  var_floor: 1.0
+  huber_delta: 1.0
+  aux: {}
+
+inference:
+  tile: [64, 128, 128]
+  overlap: [16, 16, 16]
+  tta:
+    rotations: 4          # 4 × 90° rotations in H×W plane
+    flips: true           # also flip H → 4 × 2 = 8 augmentations total

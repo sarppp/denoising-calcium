@@ -581,6 +581,8 @@ def train(cfg, data_root: Path, out_dir: Path,
                         overlap=cfg.inference.overlap,
                         device=device,
                         amp=cfg.training.amp,
+                        tta_rotations=cfg.inference.tta.rotations,
+                        tta_flips=cfg.inference.tta.flips,
                     )
                 scores.append(r.st_snr)
                 log.log(kind="val", epoch=epoch, file=vp.stem,
