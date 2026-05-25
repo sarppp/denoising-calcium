@@ -21,8 +21,9 @@ model:
 data:
   patch:       [64, 128, 128]
   stride:      [16, 64, 64]
-  batch_size:  12                        # slightly smaller batch: Mamba kernels use more VRAM
+  batch_size:  8                         # 8 × grad_accum=2 → effective 16; fits T4 16GB at [64,128,128]
   num_workers: 4
+  samples_per_epoch: 2000               # 2000÷8=250 steps/epoch; 100 epochs ≈ ~10h on T4
   train_stacks: [A1, B1, C2, D2]
   ref_stack:   F0
   val_stacks:  [F1, F2, F3]
@@ -40,6 +41,8 @@ training:
   epochs: 100
   warmup_steps: 1000                     # longer warmup helps Mamba converge
   grad_clip: 1.0
+  grad_accum: 2                          # effective_batch = 8 × 2 = 16; reduces peak VRAM vs batch=16
+  grad_ckpt:  false
   ema_decay: 0.999
   amp: true
   seed: 0
