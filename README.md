@@ -4,7 +4,7 @@
   <strong>Noise2Void in 3D on calcium imaging breaks if you use 2D masks, the wrong loss, or forget that temporal fidelity is half the metric.</strong><br><br>
   <strong>This pipeline is measurement-first: 10 notebooks quantify every decision before any model runs. Every shortcut costs 5–14 dB on the leaderboard.</strong>
 
-  ![Temporal ACF on clean F0: τ₀.₅ = 46 frames justifies T = 128](assets/01_tsnr_baseline_plot_001.png)
+  ![F0 vs F1 vs F2 vs F3 at frame 100](assets/08_stack_comparison_plot_001.png)
 </p>
 
 ---
@@ -86,6 +86,8 @@ ACF[30] = 0.665
 
 A calcium transient at frame 0 has decayed to 50% amplitude by frame 46. **T = 64 captures one full decay length** (used for ablations to save memory); **T = 128 captures two decay lengths with safety margin** (used for full training). Both are physically justified — T = 128 is preferred when VRAM allows.
 
+![Temporal ACF on clean F0: τ₀.₅ = 46 frames justifies T = 128](assets/01_tsnr_baseline_plot_001.png)
+
 ---
 
 ### Notebook 02 — The Metric Geometry Discovery
@@ -136,6 +138,14 @@ We rescaled a clean patch to different effective gains and measured stSNR degrad
 A model trained at gain≈35 and tested at gain≈1299 (F3, OOD Task 2) without augmentation would fail completely. **Log-uniform gain augmentation per patch during training** — `g ~ LogUniform([20, 2000])` — forces the network to generalise to every gain level. Log-uniform (not linear uniform) is critical: linear sampling under-represents low-gain patches where the range is wide.
 
 **Implementation detail — per-sample gain tensor (fixed):** Earlier code shared a single `NoiseParams` scalar across the whole batch. Augmented samples (gain≈991) trained on a low-gain stack (gain≈28) had their Anscombe inverse applied with the wrong gain, scaling their gradient contribution by `k = g_true/g_aug ≈ 1/35`. High-gain augmented samples were nearly invisible to the optimizer — the augmentation existed in the data but not in the loss. Fixed: `_make_params()` now returns a per-sample `(B,)` gain tensor that is passed through all five model `forward()` calls and used for both `pred` and `tgt_raw`. Every augmented sample now contributes its full gradient weight regardless of gain level.
+
+---
+
+### Notebook 08 — Why the Stacks Look Identical but Aren't
+
+![F0 vs F1 vs F2 vs F3 at frame 100](assets/08_stack_comparison_plot_001.png)
+
+Same frame, same colorscale, four noise levels. F0 is clean. F1 is noisy. F2 is very noisy. F3 is almost pure noise — signal is 0.4% of total power. Gain varies 4× across these stacks, which is why **per-patch gain augmentation** is required rather than per-model normalization.
 
 ---
 

@@ -65,7 +65,12 @@ training:
   seed: 0
   log_every: 50
   ckpt_every: 5
-  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
+  early_stop: { metric: stsnr_val, patience: 10, higher_is_better: true }
+  # patience=10 (not 5): cosine restarts fire at epochs ~33 and ~67 (T_0 = 25000÷3 = 8333 steps).
+  # patience=5 can fire during the end-of-cycle plateau or post-restart dip before the model
+  # recovers into the next cycle. patience=10 covers one full valley safely.
+  # Also protects against non-monotonic F3 improvement early in training as the model
+  # adjusts to high-gain gradients at full weight (per-sample gain fix).
 
 # ─── loss ───────────────────────────────────────────────────────────────────
 loss:
