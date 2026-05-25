@@ -1,5 +1,13 @@
-# Same as ablation_nll.yaml except loss.name = mse (vanilla MSE in raw ADU).
-name: ablation_mse
+# Same as ablation_nll.yaml except loss.name = mae (mean absolute error in raw ADU).
+#
+# MAE rationale: targets the conditional median rather than the mean.
+# For heavy-tailed Poisson noise (as in A1/B1 where g≈28 and R²≈0.27),
+# the median estimator is more robust than the MSE/NLL mean estimator.
+# Effectively equivalent to L1-regularised denoising.
+#
+# Compare against ablation_nll and ablation_mse via:
+#   python scripts/ablation_verdict.py runs/nll_dir runs/mse_dir runs/mae_dir
+name: ablation_mae
 
 model:
   name: n2v3d
@@ -37,7 +45,7 @@ training:
   early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
 
 loss:
-  name: mse                               # plain MSE (not anscombe_mse — that's different)
+  name: mae                               # mean absolute error — L1, targets median
   var_floor: 1.0
   aux: {}
 

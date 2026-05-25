@@ -77,8 +77,9 @@ class DataConfig:
     num_workers: int = 4
     samples_per_epoch: int = 10_000
     train_stacks: list[str] = field(default_factory=lambda: ["A1", "B1", "C2", "D2"])
-    val_stacks: list[str] = field(default_factory=lambda: ["F0", "F1", "F2"])
-    # F3 is NEVER trained on — it is Task 2 evaluation only.
+    val_stacks: list[str] = field(default_factory=lambda: ["F0", "F1", "F2", "F3"])
+    # F0 is the clean reference (used to find ref_path in train.py, skipped in loop).
+    # F3 is OOD (Task 2) — must be validated to track generalisation.
     gain_aug: GainAugConfig = field(default_factory=GainAugConfig)
     flip: bool = True
     rot90: bool = True

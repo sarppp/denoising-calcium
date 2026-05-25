@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
+import tifffile
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -52,15 +53,51 @@ from .noise import NoiseParams
 def _make_params(batch: dict[str, Any], index: int = 0) -> NoiseParams:
     """Build a NoiseParams from the (augmented) gain/read_var in the batch.
 
-    We use the first element's gain as the batch-level value because the
-    dataset applies a single gain aug per sample but all Anscombe inverses
-    in a minibatch share one scalar. If you want strict per-sample gains,
-    refactor the forward to accept a (B,) gain tensor.
+    KNOWN LIMITATION: we use index 0's gain as the batch-level scalar because
+    the model forward (UNet3D, DeepCAD, Mamba, PINN) applies a single
+    Anscombe inverse using one NoiseParams.  With per-sample gain augmentation
+    this introduces a systematic bias for samples 1..B-1.
+
+    Mitigation: the dataset applies gain augmentation with prob=0.5 (see
+    DataConfig.gain_aug.prob), so ~50 % of samples share the un-augmented
+    gain that is closest to the batch median.  Full fix requires refactoring
+    the model forward to accept a (B,) gain tensor.
     """
+    gains = batch["gain"]
+    if isinstance(gains, torch.Tensor) and gains.numel() > 1:
+        # Use batch-median gain to minimise worst-case Anscombe-inverse error.
+        gain_val = float(gains.median().item())
+    else:
+        gain_val = float(gains[index].item() if hasattr(gains, "__getitem__") else gains)
     return NoiseParams(
-        gain=float(batch["gain"][index].item()),
+        gain=gain_val,
         read_var=float(batch["read_var"][index].item()),
     )
+
+
+def _simple_loss(name: str, pred: Tensor, tgt: Tensor,
+                 gain: float, read_var: float, var_floor: float) -> Tensor:
+    """Dispatch among the three supported primary losses.
+
+    Supported names (cfg.loss.name):
+      poisson_gaussian_nll  — heteroscedastic Gaussian NLL (default)
+      anscombe_mse          — MSE in Anscombe (unit-variance) space
+      mse                   — plain mean squared error in raw ADU
+      mae                   — mean absolute error in raw ADU (robust to
+                              heavy Poisson tails; targets the median)
+
+    ``anscombe_mse`` is a distinct loss from ``mse``: it operates on the
+    Anscombe-transformed *input* (pred/tgt must already be in Anscombe
+    space). All other losses operate in raw ADU.
+    """
+    if name == "mse":
+        return ((pred - tgt) ** 2).mean()
+    if name == "mae":
+        return (pred - tgt).abs().mean()
+    if name == "anscombe_mse":
+        return ((pred - tgt) ** 2).mean()
+    # Default: poisson_gaussian_nll
+    return poisson_gaussian_nll(pred, tgt, gain, read_var, var_floor=var_floor)
 
 
 def step_deepinterp(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
@@ -72,25 +109,23 @@ def step_deepinterp(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     # Target is Anscombe-space; invert to raw ADU so both pred and target
     # share the same space regardless of which loss is selected.
     tgt_raw = (tgt_anscombe / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
-    if cfg.loss.name == "anscombe_mse":
-        return ((pred_adu - tgt_raw) ** 2).mean()
-    return poisson_gaussian_nll(pred_adu, tgt_raw, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
+    return _simple_loss(cfg.loss.name, pred_adu, tgt_raw,
+                        params.gain, params.read_var, cfg.loss.var_floor)
 
 
 def step_n2v3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
-    """Blind-spot masking in Anscombe space; PG-NLL on masked positions."""
+    """Blind-spot masking in Anscombe space; primary loss on masked positions."""
     vol = batch["input"].to(model_device(model))                # (B, 1, T, H, W)
     params = _make_params(batch, 0)
     masked, mask = stratified_blindspot(vol, mask_fraction=0.005)
-    pred_adu = model(masked, params)                            # (B, 1, T, H, W)
+    pred_adu = model(masked, params)                            # (B, 1, T, H, W) raw ADU
     # Undo Anscombe on the original volume to get raw-ADU targets.
     tgt_raw = (vol / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
-    # Select masked positions only.
+    # Select masked positions only — N2V self-supervised objective.
     pred_m = pred_adu[mask]
     tgt_m = tgt_raw[mask]
-    if cfg.loss.name == "mse":
-        return ((pred_m - tgt_m) ** 2).mean()
-    return poisson_gaussian_nll(pred_m, tgt_m, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
+    return _simple_loss(cfg.loss.name, pred_m, tgt_m,
+                        params.gain, params.read_var, cfg.loss.var_floor)
 
 
 def step_mamba3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
@@ -105,9 +140,8 @@ def step_deepcad(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     params = _make_params(batch, 0)
     pred_adu = model(odd, params)                               # raw ADU
     tgt_raw = (even / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
-    if cfg.loss.name == "mse":
-        return ((pred_adu - tgt_raw) ** 2).mean()
-    return poisson_gaussian_nll(pred_adu, tgt_raw, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
+    return _simple_loss(cfg.loss.name, pred_adu, tgt_raw,
+                        params.gain, params.read_var, cfg.loss.var_floor)
 
 
 def step_pinn(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
@@ -121,10 +155,8 @@ def step_pinn(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     tgt_raw = (vol / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
     pred_m = out.denoised[mask]
     tgt_m = tgt_raw[mask]
-    if cfg.loss.name == "mse":
-        primary = ((pred_m - tgt_m) ** 2).mean()
-    else:
-        primary = poisson_gaussian_nll(pred_m, tgt_m, params.gain, params.read_var, var_floor=cfg.loss.var_floor)
+    primary = _simple_loss(cfg.loss.name, pred_m, tgt_m,
+                           params.gain, params.read_var, cfg.loss.var_floor)
 
     # Aux loss (PINN kinetics).
     aux_cfg = cfg.loss.aux.get("pinn")
@@ -201,7 +233,48 @@ def build_scheduler(opt: AdamW, cfg, steps_per_epoch: int):
 # --------------------------------------------------------------------------- #
 
 
-def train(cfg, data_root: Path, out_dir: Path) -> None:
+def _probe(model: nn.Module, loader, step_fn, cfg, device: torch.device,
+           opt, scaler, n_batches: int = 4) -> None:
+    """Run N batches, assert loss is finite, then return.
+
+    Catches data-path errors, shape mismatches, NaN losses, and CUDA OOM
+    before committing to a long training run.  Raises ``RuntimeError`` on
+    any failure so the caller can surface it cleanly.
+    """
+    model.train()
+    losses: list[float] = []
+    amp_dtype = torch.bfloat16 if cfg.training.amp and device.type == "cuda" else None
+    for i, batch in enumerate(loader):
+        if i >= n_batches:
+            break
+        opt.zero_grad(set_to_none=True)
+        if amp_dtype is not None:
+            with torch.autocast(device_type="cuda", dtype=amp_dtype):
+                loss = step_fn(model, batch, cfg)
+        else:
+            loss = step_fn(model, batch, cfg)
+        if not torch.isfinite(loss):
+            raise RuntimeError(
+                f"Probe failed: non-finite loss ({loss.item()}) at batch {i + 1}. "
+                "Check data paths, noise params, and loss function."
+            )
+        if scaler.is_enabled():
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+        else:
+            loss.backward()
+            opt.step()
+        losses.append(float(loss.item()))
+        print(f"[probe] batch {i + 1}/{n_batches}  loss={loss.item():.4f}", flush=True)
+    if len(losses) >= 2 and losses[-1] >= losses[0] * 1.5:
+        print(f"[probe] WARNING: loss not decreasing ({losses[0]:.4f} → {losses[-1]:.4f}). "
+              "Check LR and data.", flush=True)
+    else:
+        print(f"[probe] OK  {losses[0]:.4f} → {losses[-1]:.4f}", flush=True)
+
+
+def train(cfg, data_root: Path, out_dir: Path, probe_only: bool = False) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -232,13 +305,26 @@ def train(cfg, data_root: Path, out_dir: Path) -> None:
     )
 
     # Optimiser + schedule
+    # steps_per_epoch = optimizer steps (not raw batch count); sched.step() is
+    # called every grad_accum batches so we must divide here to get the right T_0.
     opt = build_optimizer(model, cfg)
-    sched = build_scheduler(opt, cfg, steps_per_epoch=len(train_loader))
+    opt_steps_per_epoch = max(1, len(train_loader) // cfg.training.grad_accum)
+    sched = build_scheduler(opt, cfg, steps_per_epoch=opt_steps_per_epoch)
     scaler = torch.amp.GradScaler("cuda", enabled=cfg.training.amp and device.type == "cuda")
     amp_dtype = torch.bfloat16 if cfg.training.amp else None
     ema = EMA(model, decay=cfg.training.ema_decay)
 
     step_fn = STEP_REGISTRY[cfg.model.name]
+
+    # ── Probe (always run; catches path/shape/NaN failures cheaply) ──────────
+    print("\n[probe] Running 4-batch sanity check …", flush=True)
+    _probe(model, train_loader, step_fn, cfg, device, opt, scaler, n_batches=4)
+    log.log(kind="probe-ok", loss_name=cfg.loss.name)
+    if probe_only:
+        print("[probe] --probe-only: exiting after successful probe.", flush=True)
+        log.log(kind="probe-only-exit")
+        log.close()
+        return
 
     best_val = -math.inf
     bad_epochs = 0
@@ -296,7 +382,6 @@ def train(cfg, data_root: Path, out_dir: Path) -> None:
         if ref_path is None or not ref_path.exists():
             log.log(kind="val-skip", reason="F0 reference not available")
             continue
-        import tifffile
         ref = np.asarray(tifffile.memmap(ref_path), dtype=np.float32)
         backup = ema.copy_to(model)
         try:

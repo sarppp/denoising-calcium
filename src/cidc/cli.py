@@ -110,7 +110,9 @@ def _cmd_train(args: argparse.Namespace) -> int:
         cfg.data.batch_size = int(args.override_batch)
     if args.override_grad_accum is not None:
         cfg.training.grad_accum = int(args.override_grad_accum)
-    _train(cfg, Path(args.data), Path(args.out))
+    if args.train_stacks is not None:
+        cfg.data.train_stacks = args.train_stacks
+    _train(cfg, Path(args.data), Path(args.out), probe_only=args.probe_only)
     return 0
 
 
@@ -355,6 +357,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--override-epochs", type=int, default=None)
     s.add_argument("--override-batch", type=int, default=None)
     s.add_argument("--override-grad-accum", type=int, default=None)
+    s.add_argument("--train-stacks", nargs="+", default=None,
+                   metavar="STACK", help="override data.train_stacks (e.g. A1 B1)")
+    s.add_argument("--probe-only", action="store_true",
+                   help="run 4-batch probe then exit (pipeline sanity check)")
     s.set_defaults(func=_cmd_train)
 
     # infer
