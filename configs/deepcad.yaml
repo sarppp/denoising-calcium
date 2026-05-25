@@ -12,8 +12,8 @@ model:
     pool:    2
 
 data:
-  patch:       [32, 128, 128]            # will be split into 2×(16, H, W) odd/even
-  stride:      [8, 64, 64]
+  patch:       [64, 128, 128]            # will be split into 2×(16, H, W) odd/even
+  stride:      [16, 64, 64]
   batch_size:  16
   num_workers: 4
   train_stacks: [A1, B1, C2, D2]
@@ -46,6 +46,6 @@ loss:
   aux: {}
 
 inference:
-  tile:    [32, 128, 128]
-  overlap: [8, 16, 16]
+  tile:    [64, 128, 128]
+  overlap: [16, 16, 16]
   tta:     { rotations: 4, flips: true }

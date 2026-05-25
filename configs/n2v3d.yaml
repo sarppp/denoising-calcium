@@ -40,8 +40,8 @@ model:
 
 # ─── data ───────────────────────────────────────────────────────────────────
 data:
-  patch:       [32, 128, 128]            # [T, H, W]
-  stride:      [8, 64, 64]               # patch stride over each stack
+  patch:       [64, 128, 128]            # [T, H, W] — T=64 > τ₀.₅=46 (nb01); T=32 was too short
+  stride:      [16, 64, 64]              # patch stride over each stack
   batch_size:  16
   num_workers: 4
   train_stacks: [A1, B1, C2, D2]         # train only on training stacks
@@ -97,8 +97,8 @@ loss:
 
 # ─── inference ──────────────────────────────────────────────────────────────
 inference:
-  tile:    [32, 128, 128]                # usually same as data.patch
-  overlap: [8, 16, 16]                   # must divide tile evenly-ish
+  tile:    [64, 128, 128]                # match data.patch
+  overlap: [16, 16, 16]                  # must divide tile evenly-ish
   tta:
     rotations: 4                         # 1 | 2 | 4  (90° rotations of H×W)
     flips:     true                      # pair with rotations → up to ×8

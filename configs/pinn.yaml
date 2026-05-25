@@ -23,8 +23,8 @@ model:
     baseline_from: head                   # 'head' (learn b per pixel) | 'median'
 
 data:
-  patch:       [32, 128, 128]
-  stride:      [8, 64, 64]
+  patch:       [64, 128, 128]
+  stride:      [16, 64, 64]
   batch_size:  8                          # PINN head + ODE solve cost extra memory
   num_workers: 4
   train_stacks: [A1, B1, C2, D2]
@@ -64,6 +64,6 @@ loss:
         detach_input:  false
 
 inference:
-  tile:    [32, 128, 128]
-  overlap: [8, 16, 16]
+  tile:    [64, 128, 128]
+  overlap: [16, 16, 16]
   tta:     { rotations: 4, flips: true }

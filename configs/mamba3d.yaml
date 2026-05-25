@@ -19,8 +19,8 @@ model:
     bidirectional:  true                 # forward + reverse over the flattened volume
 
 data:
-  patch:       [32, 128, 128]
-  stride:      [8, 64, 64]
+  patch:       [64, 128, 128]
+  stride:      [16, 64, 64]
   batch_size:  12                        # slightly smaller batch: Mamba kernels use more VRAM
   num_workers: 4
   train_stacks: [A1, B1, C2, D2]
@@ -53,6 +53,6 @@ loss:
   aux: {}
 
 inference:
-  tile:    [32, 128, 128]
-  overlap: [8, 16, 16]
+  tile:    [64, 128, 128]
+  overlap: [16, 16, 16]
   tta:     { rotations: 4, flips: true }
