@@ -70,10 +70,11 @@ from pathlib import Path
 
 # Ordered preference when multiple losses tie — left = preferred
 # (more robust / fewer assumptions wins ties).
+# huber ranks above mae: huber = MAE in tails + MSE near zero, strictly >= MAE.
 LOSS_PREFERENCE = [
     "anscombe_mse",
-    "mae",
     "huber",
+    "mae",
     "mse",
     "poisson_gaussian_nll",
     "nll",

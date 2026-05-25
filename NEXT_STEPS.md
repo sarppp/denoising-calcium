@@ -107,10 +107,35 @@ python scripts/ablation_verdict.py \
 ```
 
 Look for:
-- `RECOMMENDATION:` line — this is the loss to use
+- `RECOMMENDATION:` line — starting point, but read the numbers yourself too
 - `tSNR` column — must not collapse while `sSNR` rises
 - `🔴ABORTED` — NLL blew up, definitely use the recommended alternative
 - Trend: "still-dropping" → run 100 epochs; "flat" at epoch 7-8 → 50 epochs enough
+
+### ✅ Actual ablation result (completed, T4, 10 epochs)
+
+| Loss | F1 stSNR | F3 stSNR (OOD) | Verdict |
+|------|----------|----------------|---------|
+| **huber** | **+0.020** | **+0.376** | ✅ winner |
+| mae | -0.002 | +0.249 | tied F1, loses F3 |
+| anscombe_mse | -0.760 | -1.313 | ❌ unstable on F3 |
+| mse | -3.421 | -7.217 | ❌ |
+| nll | -3.492 | -7.848 | ❌ |
+
+**Winner: `huber`**
+
+- F1: huber (+0.020) vs mae (-0.002) → 0.022 dB difference, true tie
+- F3: huber (+0.376) vs mae (+0.249) → 0.127 dB consistent gap across all epochs → tiebreak
+- Huber = MAE in tails + MSE near zero — strictly dominates MAE by construction
+
+**anscombe_mse — never use it.** F3 trajectory: `ep3=+0.703 → ep4=-0.437 → ep5=-5.929 → ep6=-7.435`.
+Catastrophic instability. Anscombe amplifies errors when gain is misspecified (R²=0.001–0.24 from nb10).
+
+**Epoch count: set `epochs: 100`, let early stopping decide.**
+- F3 OOD peaked at epoch 6 (+1.300) then declined as model overfits to training distribution
+- F1 still improving steeply at epoch 9 — not yet converged
+- Early stopping (`patience=5` on combined val stSNR = mean of F1+F2+F3) finds the balance automatically
+- Do NOT pick the epoch manually
 
 ### Step 2 — Model size test: N2V3D base vs large (10 epochs, ~20 min each on L40S)
 
