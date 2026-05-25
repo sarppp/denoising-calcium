@@ -214,6 +214,44 @@ Expected time:
 | L40S (patch=[64,128,128]) | ~2 h | ~3 h |
 | L40S (patch=[128,128,128]) | ~3 h | ~5 h |
 
+### Step 5 — Score the trained model on val stacks
+
+F0 is the **clean ground truth** — never denoise it, always use it as `--ref`.  
+Denoise F1, F2, F3 and compare each against F0 to get stSNR.
+
+```bash
+# Score all 3 val stacks at once — the main command to use after training
+uv run python scripts/score.py \
+    --config configs/n2v3d_large.yaml \
+    --ckpt   $RUNS/full_training/best.pt \
+    --data   $DATA
+
+# Output:
+#   Stack    sSNR     tSNR    stSNR
+#   F1.tif  +12.34   +8.21   +10.28   ← in-distribution
+#   F2.tif   +3.11   +1.44    +2.28   ← different condition
+#   F3.tif   -1.20   -3.10    -2.15   ← OOD Task-2 (gain≈991)
+#   mean                      +3.47
+
+# Quick sanity check during training (no TTA, ~9s per stack):
+uv run python scripts/score.py \
+    --config configs/n2v3d_large.yaml \
+    --ckpt   $RUNS/full_training/best.pt \
+    --data   $DATA \
+    --no-tta
+
+# Single stack:
+uv run python scripts/score.py \
+    --config configs/n2v3d_large.yaml \
+    --ckpt   $RUNS/full_training/best.pt \
+    --noisy  $DATA/F1.tif \
+    --ref    $DATA/F0.tif
+```
+
+TTA is read from the config automatically (`inference.tta.rotations/flips` — already 8× in all full training configs).  
+`--no-tta` overrides it for a quick check.  
+Always use `best.pt` (best val stSNR), not `last.pt`.
+
 ---
 
 ## 🖥️ GPU batch-size guide

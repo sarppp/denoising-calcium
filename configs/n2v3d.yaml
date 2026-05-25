@@ -67,7 +67,7 @@ training:
   warmup_steps:  500
   grad_clip:     1.0
   grad_accum:    2                       # effective_batch = 8 × 2 = 16; reduces peak VRAM vs batch=16
-  grad_ckpt:     false                   # trade compute for memory on small GPUs
+  grad_ckpt:     false                   # base model fits fine without it; true only for large (depth=4)
   ema_decay:     0.999
   amp:           true                    # mixed-precision (bf16 where possible)
   seed:          0
