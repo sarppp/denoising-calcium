@@ -192,41 +192,48 @@ Expected time: ~10 hours on T4 (2000 samples × 100 epochs × ~6 min/epoch).
 passes to simulate a larger batch, trading wall-clock time for VRAM. Always prefer
 `grad_accum=1` with a larger batch when the GPU has the headroom.
 
-### N2V3D base (patch=[64,128,128], ~0.5M params)
-
-| GPU | VRAM | batch_size | grad_accum | Effective batch | Notes |
-|-----|------|-----------|------------|----------------|-------|
-| T4 | 16 GB | 8 | 2 | 16 | Current default; fits safely |
-| V100 | 16 GB | 8 | 2 | 16 | Same VRAM as T4 |
-| A10G / RTX 3090 | 24 GB | 16 | 1 | 16 | ~2× faster steps than T4 setup |
-| A100 40 GB | 32 | 1 | 32 | ~4× faster steps | |
-| A100 80 GB | 64 | 1 | 64 | ~6× faster; can also enlarge patch to [128,128,128] | |
-
-### N2V3D large (patch=[64,128,128], ~4M params, grad_ckpt=true)
-
-| GPU | VRAM | batch_size | grad_accum | Effective batch |
-|-----|------|-----------|------------|----------------|
-| T4 | 16 GB | 8 | 2 | 16 |
-| A100 40 GB | 16 | 1 | 16 | |
-| A100 80 GB | 32 | 1 | 32 | |
-
-### Mamba3D base (patch=[64,128,128], ~1M params, more VRAM than N2V3D base)
-
-| GPU | VRAM | batch_size | grad_accum | Effective batch |
-|-----|------|-----------|------------|----------------|
-| T4 | 16 GB | 8 | 2 | 16 |
-| A100 40 GB | 16 | 1 | 16 | |
-| A100 80 GB | 32 | 1 | 32 | |
-
-### Common mistake: don't increase grad_accum to go faster
+### ⚠️ Common mistake: don't increase grad_accum to go faster
 
 ```
 grad_accum=4, batch=4  →  4 forward+backward passes  →  SLOWER
-grad_accum=1, batch=16 →  1 forward+backward pass   →  FASTER (same effective batch)
+grad_accum=1, batch=16 →  1 forward+backward pass   →  FASTER  (same effective batch)
 ```
 
-Only increase grad_accum when you're OOM. If you upgrade GPU, **drop grad_accum to 1 first**
-and fill the freed VRAM with a larger batch.
+Only increase grad_accum when you're OOM. If you upgrade GPU, **set grad_accum=1 first**
+and fill the freed VRAM by raising batch_size.
+
+---
+
+### N2V3D base (~0.5M params, patch=[64,128,128], 100 epochs, 2000 samples/epoch)
+
+| GPU | VRAM | batch_size | grad_accum | eff. batch | ~100-epoch time | Config change needed |
+|-----|------|-----------|------------|------------|----------------|----------------------|
+| **T4** (current) | 16 GB | 8 | 2 | 16 | **~8 h** | none — default |
+| V100 | 16 GB | 8 | 2 | 16 | ~8 h | none |
+| A10G / RTX 3090 | 24 GB | 16 | **1** | 16 | **~4 h** | `batch_size: 16`, `grad_accum: 1` |
+| A100 40 GB | 40 GB | 32 | **1** | 32 | **~2 h** | `batch_size: 32`, `grad_accum: 1` |
+| A100 80 GB | 80 GB | 64 | **1** | 64 | **~1 h** | `batch_size: 64`, `grad_accum: 1` |
+
+### N2V3D large (~4M params, patch=[64,128,128], grad_ckpt=true)
+
+| GPU | VRAM | batch_size | grad_accum | eff. batch | ~100-epoch time | Config change needed |
+|-----|------|-----------|------------|------------|----------------|----------------------|
+| **T4** (current) | 16 GB | 8 | 2 | 16 | **~12 h** | none — default |
+| A10G / RTX 3090 | 24 GB | 16 | **1** | 16 | **~6 h** | `batch_size: 16`, `grad_accum: 1`, `grad_ckpt: false` |
+| A100 40 GB | 40 GB | 32 | **1** | 32 | **~3 h** | `batch_size: 32`, `grad_accum: 1`, `grad_ckpt: false` |
+| A100 80 GB | 80 GB | 64 | **1** | 64 | **~1.5 h** | `batch_size: 64`, `grad_accum: 1`, `grad_ckpt: false` |
+
+### Mamba3D base (~1M params, patch=[64,128,128], heavier than N2V3D base)
+
+| GPU | VRAM | batch_size | grad_accum | eff. batch | ~100-epoch time | Config change needed |
+|-----|------|-----------|------------|------------|----------------|----------------------|
+| **T4** (current) | 16 GB | 8 | 2 | 16 | **~10 h** | none — default |
+| A10G / RTX 3090 | 24 GB | 16 | **1** | 16 | **~5 h** | `batch_size: 16`, `grad_accum: 1` |
+| A100 40 GB | 40 GB | 32 | **1** | 32 | **~2.5 h** | `batch_size: 32`, `grad_accum: 1` |
+| A100 80 GB | 80 GB | 64 | **1** | 64 | **~1.5 h** | `batch_size: 64`, `grad_accum: 1` |
+
+> Times assume 2000 samples/epoch. bf16 AMP on A100 (vs fp16 on T4) gives an additional ~20% speedup on top.  
+> On A100 80GB you can also grow `patch: [128,128,128]` for more temporal context — same T4 times still hold with smaller batch.
 
 ---
 
