@@ -35,11 +35,11 @@ model:
 
 # ─── data ───────────────────────────────────────────────────────────────────
 data:
-  patch:       [64, 64, 64]             # MODEL SIZE TEST — change to [128,128,128] for full training
-  stride:      [16, 32, 32]             # MODEL SIZE TEST — change to [32,64,64] for full training
-  batch_size:  32                       # MODEL SIZE TEST — change to 16 for full training
+  patch:       [128, 128, 128]          # FULL TRAINING ✅ (was [64,64,64] for model size test)
+  stride:      [32, 64, 64]             # FULL TRAINING ✅ (was [16,32,32])
+  batch_size:  16                       # FULL TRAINING ✅ (was 32 — halved because patch is 8× larger)
   num_workers: 4
-  samples_per_epoch: 2000
+  samples_per_epoch: 4000               # FULL TRAINING ✅ (was 2000 — 4000÷16=250 steps/epoch, matches ablation density)
   train_stacks: [A1, B1, C2, D2]
   ref_stack:   F0
   val_stacks:  [F1, F2, F3]
@@ -55,7 +55,7 @@ training:
   weight_decay: 1.0e-4
   scheduler: cosine_restarts
   restarts: 3
-  epochs: 10                            # MODEL SIZE TEST — change to 100 for full training
+  epochs: 100                           # FULL TRAINING ✅ (was 10 — early stopping decides actual endpoint)
   warmup_steps: 500
   grad_clip: 1.0
   grad_accum: 1                         # L40S: always 1
@@ -76,8 +76,8 @@ loss:
 
 # ─── inference ──────────────────────────────────────────────────────────────
 inference:
-  tile:    [64, 64, 64]                 # MODEL SIZE TEST — change to [128,128,128] for full training
-  overlap: [16, 16, 16]                 # MODEL SIZE TEST — change to [32,16,16] for full training
+  tile:    [128, 128, 128]              # FULL TRAINING ✅ (was [64,64,64] — matches training patch)
+  overlap: [32, 16, 16]                 # FULL TRAINING ✅ (was [16,16,16] — larger T overlap for longer tile)
   tta:
     rotations: 4
     flips: true
