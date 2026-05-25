@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cloud instance setup — run once after provisioning.
-# Tested on: RunPod (CUDA 12.4), Lambda Labs, Vast.ai (Ubuntu 22.04 + CUDA 12.x)
+# Tested on: RunPod (CUDA 12.4), Lambda Labs, Lightning Studio, Vast.ai (Ubuntu 22.04 + CUDA 12.x)
 #
 # Usage:
 #   bash cloud_setup.sh            # full setup (code already present via git clone)
@@ -26,9 +26,11 @@ if ! $DATA_ONLY; then
     fi
 
     # ── 2. Install Python dependencies ────────────────────────────────────────
-    echo "[2/4] Installing dependencies (uv sync) ..."
+    # Force Python 3.12 — PyTorch does not have wheels for 3.13+ yet.
+    echo "[2/4] Installing dependencies (Python 3.12) ..."
     cd "$WORKSPACE"
-    uv sync
+    uv venv --python 3.12
+    uv sync --python 3.12
     echo "      Done."
 fi
 
@@ -41,22 +43,31 @@ echo "      Done."
 # ── 4. Smoke-test the training pipeline ───────────────────────────────────────
 if ! $DATA_ONLY; then
     echo "[4/4] Running training probe (4 batches, verifies full pipeline) ..."
-    cd "$WORKSPACE/training"
-    uv run python train.py --probe-only --data-dir "$WORKSPACE/data"
+    cd "$WORKSPACE"
+    uv run cidc train configs/ablation_mse.yaml \
+        --data "$WORKSPACE/data/train" \
+        --out  /tmp/cidc_probe \
+        --probe-only
     echo "      Probe passed."
 fi
 
 echo ""
-echo "Setup complete. To start training:"
+echo "Setup complete."
 echo ""
-echo "  cd $WORKSPACE/training"
+echo "  export DATA=$WORKSPACE/data/train"
+echo "  export RUNS=$WORKSPACE/runs"
 echo ""
-echo "  # Ablation first (MSE vs NLL on A1/B1, ~10 epochs each):"
-echo "  uv run python train.py --stacks A1 B1 --loss nll --epochs 10 --run-name ablation_nll"
-echo "  uv run python train.py --stacks A1 B1 --loss mse --epochs 10 --run-name ablation_mse"
+echo "  # Step 1 — 5-arm loss ablation (10 epochs each, ~15-20 min per arm on T4):"
+echo "  uv run cidc train configs/ablation_nll.yaml          --data \$DATA --out \$RUNS/nll"
+echo "  uv run cidc train configs/ablation_mse.yaml          --data \$DATA --out \$RUNS/mse"
+echo "  uv run cidc train configs/ablation_mae.yaml          --data \$DATA --out \$RUNS/mae"
+echo "  uv run cidc train configs/ablation_anscombe_mse.yaml --data \$DATA --out \$RUNS/anscombe_mse"
+echo "  uv run cidc train configs/ablation_huber.yaml        --data \$DATA --out \$RUNS/huber"
 echo ""
-echo "  # Full training (after picking the winning loss):"
-echo "  uv run python train.py --loss nll --run-name full_v1"
+echo "  # Step 2 — Read verdict and pick winning loss:"
+echo "  uv run python scripts/ablation_verdict.py \$RUNS/nll \$RUNS/mse \$RUNS/mae \$RUNS/anscombe_mse \$RUNS/huber --stack F1"
 echo ""
-echo "  # Monitor progress:"
-echo "  tail -f runs/\$(ls -t runs/ | head -1)/train.log"
+echo "  # Step 3 — Full training (edit loss.name in config first):"
+echo "  uv run cidc train configs/n2v3d.yaml --data \$DATA --out \$RUNS/n2v3d_full"
+echo ""
+echo "  See NEXT_STEPS.md for the complete roadmap."

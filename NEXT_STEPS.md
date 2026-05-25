@@ -232,8 +232,94 @@ and fill the freed VRAM by raising batch_size.
 | A100 40 GB | 40 GB | 32 | **1** | 32 | **~2.5 h** | `batch_size: 32`, `grad_accum: 1` |
 | A100 80 GB | 80 GB | 64 | **1** | 64 | **~1.5 h** | `batch_size: 64`, `grad_accum: 1` |
 
-> Times assume 2000 samples/epoch. bf16 AMP on A100 (vs fp16 on T4) gives an additional ~20% speedup on top.  
-> On A100 80GB you can also grow `patch: [128,128,128]` for more temporal context — same T4 times still hold with smaller batch.
+> Times assume 2000 samples/epoch. bf16 AMP on A100 (vs fp16 on T4) gives an additional ~20% speedup on top.
+
+### GPU upgrade recipe — only change 2–3 lines in the yaml
+
+```yaml
+# T4 (current defaults)
+batch_size: 8
+grad_accum: 2
+grad_ckpt: true    # large models only
+
+# A100 40GB
+batch_size: 32
+grad_accum: 1
+grad_ckpt: false   # no longer needed
+```
+
+Everything else (lr, epochs, patch, scheduler) stays the same.
+
+### grad_ckpt: true — what it does
+
+During a normal forward pass PyTorch **saves every intermediate activation** so it
+can use them during backprop. With `grad_ckpt: true` it **throws those activations
+away** and recomputes them during backward.
+
+- **Cost**: ~20–30% slower per step
+- **Benefit**: ~40–60% less VRAM
+
+Only needed for large models (depth=4, base_ch=32) on T4. Disable it when you move
+to a bigger GPU — it's a pure speed penalty once you have the VRAM headroom.
+
+---
+
+## 🔬 Inference, TTA and the 60-minute limit
+
+**Competition rule: one video per container, 60 minutes.**  
+This is very generous — a single stack takes ~9 seconds without TTA.
+
+### Inference timing on T4 (fp16)
+
+| Tile size | TTA | Est. time / stack | Under 60 min? |
+|-----------|-----|-------------------|---------------|
+| [64,128,128] | none (rotations=1) | ~9 sec | ✅ trivially |
+| [64,128,128] | 8× (rotations=4, flips=true) | ~72 sec | ✅ trivially |
+| [128,128,128] | none | ~12 sec | ✅ |
+| [128,128,128] | 8× TTA | ~100 sec | ✅ |
+
+You have ~35× more budget than needed. **Use full 8× TTA** — it's already enabled
+in all configs (`rotations: 4, flips: true`) and gives a free ~0.5–1.5 dB.
+
+### Inference VRAM on T4 — always safe
+
+Inference processes **one tile at a time**, not a full batch. Training VRAM ≠ inference VRAM.
+
+| Tile | VRAM per forward pass |
+|------|-----------------------|
+| [64,128,128] | ~0.5 GB |
+| [128,128,128] | ~1 GB |
+| [128,256,256] | ~4 GB |
+
+All well within T4's 16 GB even with 8× TTA accumulation.
+
+### Training on bigger GPU, inference on T4
+
+The `.pt` checkpoint is GPU-agnostic. Train anywhere, submit `best.pt`, competition
+evaluates on T4. `eval.py` auto-detects fp16/bf16 per GPU — nothing to change.
+
+### L40S config (48 GB VRAM)
+
+If you have an L40S, use a larger temporal patch for better tSNR.
+T=128 > 2× τ₀.₅=46 frames — the model sees the full rise and decay of each transient.
+
+```yaml
+# Edit in n2v3d.yaml (or n2v3d_large.yaml) when training on L40S:
+data:
+  patch:      [128, 128, 128]   # T: 64→128 captures full calcium transient decay
+  batch_size: 16                # L40S has 48 GB — no need to split
+  grad_accum: 1                 # direct, no accumulation needed
+
+inference:
+  tile:    [128, 128, 128]      # match training patch
+  overlap: [32, 16, 16]        # larger T overlap for the longer tile
+```
+
+Inference on T4 with `tile=[128,128,128]`: ~1 GB VRAM per tile, ~100 sec with 8× TTA — still well under 60 min.
+
+> **Don't use `[128,256,256]`** — growing H,W beyond 128 gives little benefit (spatial
+> context is already sufficient at 128×128) and risks edge cases on stacks with
+> non-standard spatial dimensions.
 
 ---
 
@@ -251,8 +337,8 @@ and fill the freed VRAM by raising batch_size.
 | 3× gain mismatch | −14.94 dB | nb05 |
 | Inference time / stack | ~9 sec (no TTA, fp16) | measured on T4 |
 | Inference time / stack | ~72 sec (8× TTA, fp16) | estimated on T4 |
-| Competition time limit | 60 min total | competition rules |
-| Safe TTA stack count | ~40 stacks | 40 × 72s = 48 min < 60 min |
+| Competition time limit | 60 min per video | **one video per container** |
+| TTA safety margin | ~35× headroom | 72s actual vs 3600s limit |
 | AMP dtype on T4 | float16 (NOT bfloat16) | T4 = Turing cc7.5, no native bf16 |
 | AMP dtype on A100 | bfloat16 | Ampere cc8.0+, stable without scaler |
 
