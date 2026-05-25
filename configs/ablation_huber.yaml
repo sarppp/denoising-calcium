@@ -1,0 +1,72 @@
+# Same as ablation_nll.yaml except loss.name = huber.
+#
+# Huber loss rationale:
+#   Huber(δ) = MSE when |pred - tgt| < δ, MAE in the tails.
+#   This makes it adaptive: near zero it is smooth and has nice gradient
+#   properties (like MSE); for large residuals it is robust to outliers
+#   (like MAE). δ=1.0 ADU is a reasonable default given typical pixel counts.
+#
+#   Why this matters here: A1/B1 have R²≈0.27 and occasional large residuals
+#   from imperfectly-subtracted background. NLL is sensitive to these
+#   (variance underestimate → huge NLL gradient). MAE clips the gradient
+#   entirely. Huber is the balanced choice.
+#
+#   In image restoration literature (DNCNN, DnCNN-B, CBDNET), Huber
+#   or Charbonnier (smooth L1) consistently matches or beats L2 when
+#   outlier pixels are present.
+#
+# δ = 1.0 (default) means:
+#   - residuals < 1 ADU → quadratic penalty
+#   - residuals > 1 ADU → linear penalty (gradient ≤ 1)
+# Adjust via loss.huber_delta in this file if needed.
+#
+# Compare against other ablations via:
+#   python scripts/ablation_verdict.py runs/nll runs/mse runs/mae runs/anscombe_mse runs/huber
+name: ablation_huber
+
+model:
+  name: n2v3d
+  kwargs: { in_ch: 1, base_ch: 12, depth: 3, kernel: 3, pool: 2 }
+
+data:
+  patch:       [64, 64, 64]
+  stride:      [16, 32, 32]
+  batch_size:  8
+  num_workers: 4
+  samples_per_epoch: 2000
+  train_stacks: [A1, B1]
+  ref_stack:   F0
+  val_stacks:  [F1, F2, F3]       # noisy stacks scored against ref_stack; F3=OOD Task-2
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip: true
+  rot90: true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 1
+  epochs: 10
+  warmup_steps: 100
+  grad_clip: 1.0
+  grad_accum: 1
+  grad_ckpt: false
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 20
+  ckpt_every: 2
+  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
+
+loss:
+  name: huber                    # Huber loss: MSE near zero, MAE in tails
+  var_floor: 1.0
+  huber_delta: 1.0               # δ — transition point from quadratic to linear
+  aux: {}
+
+inference:
+  tile: [64, 64, 64]
+  overlap: [16, 16, 16]
+  tta: { rotations: 1, flips: false }

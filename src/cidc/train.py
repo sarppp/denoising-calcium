@@ -76,26 +76,48 @@ def _make_params(batch: dict[str, Any], index: int = 0) -> NoiseParams:
 
 
 def _simple_loss(name: str, pred: Tensor, tgt: Tensor,
-                 gain: float, read_var: float, var_floor: float) -> Tensor:
-    """Dispatch among the three supported primary losses.
+                 gain: float, read_var: float, var_floor: float,
+                 huber_delta: float = 1.0) -> Tensor:
+    """Dispatch among the five supported primary losses.
+
+    All losses receive ``pred`` and ``tgt`` in **raw ADU space**.
 
     Supported names (cfg.loss.name):
-      poisson_gaussian_nll  — heteroscedastic Gaussian NLL (default)
-      anscombe_mse          — MSE in Anscombe (unit-variance) space
-      mse                   — plain mean squared error in raw ADU
-      mae                   — mean absolute error in raw ADU (robust to
-                              heavy Poisson tails; targets the median)
+      poisson_gaussian_nll  — heteroscedastic Gaussian NLL (default, optimal
+                              when noise model is correct; R²≥0.9 required)
+      anscombe_mse          — MSE after forward Anscombe transform (variance-
+                              stabilised; principled even when R² is poor,
+                              does NOT assume the noise model is exactly right)
+      mse                   — plain MSE in raw ADU (simple baseline)
+      mae                   — MAE in raw ADU (L1; robust to heavy Poisson
+                              tails, targets the conditional median)
+      huber                 — Huber loss with δ=huber_delta; MSE near zero,
+                              MAE in the tails (adaptive, outlier-resistant)
 
-    ``anscombe_mse`` is a distinct loss from ``mse``: it operates on the
-    Anscombe-transformed *input* (pred/tgt must already be in Anscombe
-    space). All other losses operate in raw ADU.
+    Notes
+    -----
+    ``anscombe_mse`` was previously broken — it computed plain MSE because
+    pred/tgt are passed in raw ADU.  Fixed: we now apply the forward
+    Anscombe transform z = (2/g)·√(g·y + 3/8·g² + σ²) inside this branch
+    so the residuals are in the unit-variance stabilised domain.
     """
     if name == "mse":
         return ((pred - tgt) ** 2).mean()
     if name == "mae":
         return (pred - tgt).abs().mean()
+    if name == "huber":
+        return F.huber_loss(pred, tgt, delta=huber_delta, reduction="mean")
     if name == "anscombe_mse":
-        return ((pred - tgt) ** 2).mean()
+        # Forward Anscombe transform: z = (2/g) * sqrt(g*y + 3/8*g² + σ²).
+        # Stabilises Poisson-Gaussian noise to unit variance, making the MSE
+        # loss distribution-agnostic even when the fitted R² is low.
+        g = gain
+        sr2 = read_var
+        inside_pred = (g * pred + 0.375 * g * g + sr2).clamp(min=1e-6)
+        inside_tgt = (g * tgt + 0.375 * g * g + sr2).clamp(min=1e-6)
+        pred_a = (2.0 / g) * inside_pred.sqrt()
+        tgt_a = (2.0 / g) * inside_tgt.sqrt()
+        return ((pred_a - tgt_a) ** 2).mean()
     # Default: poisson_gaussian_nll
     return poisson_gaussian_nll(pred, tgt, gain, read_var, var_floor=var_floor)
 
@@ -110,7 +132,8 @@ def step_deepinterp(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     # share the same space regardless of which loss is selected.
     tgt_raw = (tgt_anscombe / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
     return _simple_loss(cfg.loss.name, pred_adu, tgt_raw,
-                        params.gain, params.read_var, cfg.loss.var_floor)
+                        params.gain, params.read_var, cfg.loss.var_floor,
+                        huber_delta=cfg.loss.huber_delta)
 
 
 def step_n2v3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
@@ -125,7 +148,8 @@ def step_n2v3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     pred_m = pred_adu[mask]
     tgt_m = tgt_raw[mask]
     return _simple_loss(cfg.loss.name, pred_m, tgt_m,
-                        params.gain, params.read_var, cfg.loss.var_floor)
+                        params.gain, params.read_var, cfg.loss.var_floor,
+                        huber_delta=cfg.loss.huber_delta)
 
 
 def step_mamba3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
@@ -141,7 +165,8 @@ def step_deepcad(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     pred_adu = model(odd, params)                               # raw ADU
     tgt_raw = (even / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
     return _simple_loss(cfg.loss.name, pred_adu, tgt_raw,
-                        params.gain, params.read_var, cfg.loss.var_floor)
+                        params.gain, params.read_var, cfg.loss.var_floor,
+                        huber_delta=cfg.loss.huber_delta)
 
 
 def step_pinn(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
@@ -156,7 +181,8 @@ def step_pinn(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     pred_m = out.denoised[mask]
     tgt_m = tgt_raw[mask]
     primary = _simple_loss(cfg.loss.name, pred_m, tgt_m,
-                           params.gain, params.read_var, cfg.loss.var_floor)
+                           params.gain, params.read_var, cfg.loss.var_floor,
+                           huber_delta=cfg.loss.huber_delta)
 
     # Aux loss (PINN kinetics).
     aux_cfg = cfg.loss.aux.get("pinn")

@@ -4,36 +4,47 @@
 The script reads the RunLogger JSONL format (train_<model>.jsonl) produced by
 ``src/cidc/train.py`` and answers two questions:
 
-  1. Which loss wins: NLL, MAE, or MSE?
-  2. Are 10 epochs enough, or should you run 50/100?
+  1. Which loss wins on val stSNR?
+  2. Are 10 epochs enough, or should you run longer?
 
 Usage
 -----
+    # Minimal 3-arm ablation:
+    python scripts/ablation_verdict.py runs/nll runs/mse runs/mae
+
+    # Full 5-arm ablation (recommended given nb10 noise-model findings):
     python scripts/ablation_verdict.py \\
-        runs/nll_dir runs/mse_dir runs/mae_dir [--stack F1] [--epoch -1]
+        runs/nll runs/mse runs/mae runs/anscombe_mse runs/huber \\
+        [--stack F1] [--epoch -1]
 
     # --stack   which val stack to rank on   (default: F1)
     # --epoch   which epoch row to compare   (-1 = last, default)
 
-Decision rules (printed at the end)
--------------------------------------
-NLL wins clearly (>1 dB above others on stSNR)
-    → Use NLL for full training. A1/B1 R²≈0.27 didn't destabilise it.
+Supported losses (any subset, any order)
+-----------------------------------------
+    poisson_gaussian_nll  Theoretically optimal when R²≥0.9. Risky on A1/B1
+                          (R²≈0.27). nb10 shows R²≈0.001 for val stacks too.
+    anscombe_mse          MSE in variance-stabilised (Anscombe) space. Principled
+                          for Poisson-Gaussian even when R² is poor. Recommended
+                          baseline given nb10 findings.
+    mse                   Plain MSE in raw ADU. Simple baseline.
+    mae                   MAE in raw ADU. Robust to heavy Poisson tails. Targets
+                          the conditional median.
+    huber                 Huber(δ=1). MSE near zero, MAE in tails. Adaptive.
 
-MAE wins or ties NLL (within 0.5 dB)
-    → Use MAE. Poisson tails dominate; median-targeting loss is more robust.
+Decision rules
+--------------
+NLL wins clearly (>1 dB above ALL others on stSNR)
+    → Use NLL for full training. R²≈0.27 didn't destabilise it.
 
-MSE wins
-    → Unlikely but possible. Suggests noise is closer to Gaussian than Poisson.
+anscombe_mse wins or ties NLL (within 0.5 dB)
+    → Use anscombe_mse. Variance stabilisation was enough without full NLL.
 
-NLL is unstable (NaN count > 0, or train loss diverges)
-    → Use MAE. NLL blew up because A1/B1 noise model is too wrong.
-    → Also consider Hybrid: NLL for C2/D2 batches, MAE for A1/B1.
+MAE or Huber wins / ties best (within 0.5 dB)
+    → Use that loss. Distributional mismatch too large for model-based losses.
 
-After ranking:
-    If loss curve still dropping linearly at epoch N → run 100 epochs.
-    If loss curve flattening (last 3 epochs < 5% drop)  → 50 epochs is enough.
-    If loss curve flattening at epoch 7–8 of 10          → 30 epochs may suffice.
+NLL is unstable (NaN steps > threshold, or non-finite final score)
+    → Discard NLL. Use the highest-scoring stable loss.
 
 Log format expected (kind field)
 ---------------------------------
@@ -57,6 +68,27 @@ from pathlib import Path
 # Parsing                                                                     #
 # --------------------------------------------------------------------------- #
 
+# Ordered preference when multiple losses tie — left = preferred
+# (more robust / fewer assumptions wins ties).
+LOSS_PREFERENCE = [
+    "anscombe_mse",
+    "mae",
+    "huber",
+    "mse",
+    "poisson_gaussian_nll",
+    "nll",
+]
+
+# Keywords to scan config name for when probe-ok row is absent.
+_CFG_NAME_KEYWORDS = [
+    ("anscombe_mse", "anscombe_mse"),
+    ("anscombe",     "anscombe_mse"),
+    ("huber",        "huber"),
+    ("nll",          "poisson_gaussian_nll"),
+    ("mae",          "mae"),
+    ("mse",          "mse"),
+]
+
 
 def _read_jsonl(path: Path) -> list[dict]:
     rows = []
@@ -76,7 +108,6 @@ def _find_jsonl(run_dir: Path) -> Path:
     candidates = sorted(run_dir.glob("train_*.jsonl"))
     if candidates:
         return candidates[0]
-    # Fallback: any jsonl
     candidates = sorted(run_dir.glob("*.jsonl"))
     if candidates:
         return candidates[0]
@@ -91,26 +122,26 @@ def _parse_run(run_dir: Path) -> dict:
     jsonl = _find_jsonl(run_dir)
     rows = _read_jsonl(jsonl)
 
-    # Collect per-epoch training loss.
+    # Per-epoch training loss.
     epoch_loss: dict[int, float] = {}
     for r in rows:
         if r.get("kind") == "epoch":
             epoch_loss[int(r["epoch"])] = float(r.get("train_loss", float("nan")))
 
-    # Collect val metrics per (epoch, stack).
+    # Val metrics per (epoch, stack).
     val: dict[int, dict[str, dict]] = {}
     for r in rows:
         if r.get("kind") == "val":
             ep = int(r["epoch"])
             stack = str(r.get("file", "?"))
             val.setdefault(ep, {})[stack] = {
-                "sSNR": float(r.get("sSNR", float("nan"))),
-                "tSNR": float(r.get("tSNR", float("nan"))),
+                "sSNR":  float(r.get("sSNR",  float("nan"))),
+                "tSNR":  float(r.get("tSNR",  float("nan"))),
                 "stSNR": float(r.get("stSNR", float("nan"))),
             }
 
-    # Meta.
-    cfg_name = "?"
+    # Meta — prefer probe-ok row for loss name, fall back to config name.
+    cfg_name  = "?"
     loss_name = "?"
     nan_count = 0
     for r in rows:
@@ -123,19 +154,26 @@ def _parse_run(run_dir: Path) -> dict:
 
     # Infer loss from config name if probe-ok row is absent.
     if loss_name == "?" and cfg_name != "?":
-        for kw in ("nll", "mse", "mae"):
-            if kw in cfg_name:
-                loss_name = kw
+        for kw, canonical in _CFG_NAME_KEYWORDS:
+            if kw in cfg_name.lower():
+                loss_name = canonical
+                break
+
+    # Last resort: infer from directory name.
+    if loss_name == "?":
+        for kw, canonical in _CFG_NAME_KEYWORDS:
+            if kw in run_dir.name.lower():
+                loss_name = canonical
                 break
 
     return {
-        "run_dir": run_dir,
-        "jsonl": jsonl,
-        "cfg_name": cfg_name,
-        "loss_name": loss_name,
-        "epoch_loss": epoch_loss,
-        "val": val,
-        "nan_count": nan_count,
+        "run_dir":       run_dir,
+        "jsonl":         jsonl,
+        "cfg_name":      cfg_name,
+        "loss_name":     loss_name,
+        "epoch_loss":    epoch_loss,
+        "val":           val,
+        "nan_count":     nan_count,
         "epochs_logged": sorted(epoch_loss.keys()),
     }
 
@@ -158,7 +196,7 @@ def _epoch_table(run: dict, stack: str) -> None:
     print(f"  {'─'*4}  {'─'*12}  {'─'*7}  {'─'*7}  {'─'*7}")
     for ep in run["epochs_logged"]:
         loss = run["epoch_loss"].get(ep, float("nan"))
-        v = run["val"].get(ep, {}).get(stack, {})
+        v   = run["val"].get(ep, {}).get(stack, {})
         st  = v.get("stSNR", float("nan"))
         s   = v.get("sSNR",  float("nan"))
         t   = v.get("tSNR",  float("nan"))
@@ -201,100 +239,142 @@ def _loss_trend(epoch_loss: dict[int, float]) -> str:
 # --------------------------------------------------------------------------- #
 
 
-NLL_WIN_THRESHOLD  = 1.0   # dB above all others → clear NLL win
-MAE_TIE_THRESHOLD  = 0.5   # dB — within this of NLL → MAE preferred (more robust)
-UNSTABLE_NAN_LIMIT = 5     # nan steps → unstable
+NLL_WIN_THRESHOLD   = 1.0   # dB above all others → clear NLL win
+TIE_THRESHOLD       = 0.5   # dB — within this of best → effectively tied
+UNSTABLE_NAN_LIMIT  = 5     # nan steps → unstable run
+
+
+def _pref_rank(loss_name: str) -> int:
+    """Lower = preferred when scores tie."""
+    try:
+        return LOSS_PREFERENCE.index(loss_name)
+    except ValueError:
+        return len(LOSS_PREFERENCE)
 
 
 def _verdict(runs: list[dict], stack: str, compare_epoch: int = -1) -> None:
-    print("\n" + "═" * 68)
+    print("\n" + "═" * 72)
     print(" ABLATION VERDICT")
-    print("═" * 68)
+    print("═" * 72)
 
-    # Gather final stSNR per run.
+    # Gather final stSNR and NaN counts per run.
     scores: dict[str, float] = {}
     nans:   dict[str, int]   = {}
+    stable: dict[str, bool]  = {}
     for r in runs:
-        v = _last_val(r, stack, compare_epoch)
-        scores[r["loss_name"]] = v.get("stSNR", float("nan"))
-        nans[r["loss_name"]]   = r["nan_count"]
-
-    # Check for instability.
-    nll_nan = nans.get("poisson_gaussian_nll", 0) + nans.get("nll", 0)
-    nll_stable = nll_nan < UNSTABLE_NAN_LIMIT and _isfinite(scores.get("poisson_gaussian_nll",
-                                                                        scores.get("nll", float("nan"))))
+        v   = _last_val(r, stack, compare_epoch)
+        ln  = r["loss_name"]
+        sc  = v.get("stSNR", float("nan"))
+        nc  = r["nan_count"]
+        is_stable = nc < UNSTABLE_NAN_LIMIT and _isfinite(sc)
+        scores[ln] = sc
+        nans[ln]   = nc
+        stable[ln] = is_stable
 
     # Print score table.
-    print(f"\n  {'Loss':<25}  {'val_' + stack + '_stSNR':>14}  {'NaN steps':>10}")
-    print(f"  {'─'*25}  {'─'*14}  {'─'*10}")
-    for r in runs:
-        ln = r["loss_name"]
-        sc = scores.get(ln, float("nan"))
-        sc_s = f"{sc:+.3f} dB" if _isfinite(sc) else "      ?"
-        print(f"  {ln:<25}  {sc_s:>14}  {nans.get(ln, 0):>10}")
+    col = 26
+    print(f"\n  {'Loss':<{col}}  {'val_' + stack + '_stSNR':>14}  {'NaN steps':>10}  {'Stable':>6}")
+    print(f"  {'─'*col}  {'─'*14}  {'─'*10}  {'─'*6}")
+    for r in sorted(runs, key=lambda r: scores.get(r["loss_name"], float("-inf")), reverse=True):
+        ln  = r["loss_name"]
+        sc  = scores.get(ln, float("nan"))
+        sc_s = f"{sc:+.3f} dB" if _isfinite(sc) else "         ?"
+        ok   = "✅" if stable.get(ln) else "🔴"
+        print(f"  {ln:<{col}}  {sc_s:>14}  {nans.get(ln, 0):>10}  {ok:>6}")
 
-    # Determine winner.
-    valid = {k: v for k, v in scores.items() if _isfinite(v)}
-    if not valid:
-        print("\n  ⚠  No valid val metrics found. Did validation run? Check --data path.")
-        return
-
-    best_loss = max(valid, key=valid.__getitem__)
-    best_score = valid[best_loss]
-
-    nll_key = next((k for k in valid if "nll" in k.lower()), None)
-    mae_key = next((k for k in valid if k == "mae"), None)
-    mse_key = next((k for k in valid if k == "mse"), None)
-
-    nll_score = valid.get(nll_key, float("-inf")) if nll_key else float("-inf")
-    mae_score = valid.get(mae_key, float("-inf")) if mae_key else float("-inf")
+    # Filter to stable runs only.
+    stable_scores = {ln: sc for ln, sc in scores.items()
+                     if stable.get(ln, False) and _isfinite(sc)}
 
     print("\n  Decision:")
-    if not nll_stable:
-        print("  🔴 NLL UNSTABLE — NaN losses or non-finite final score.")
-        print("     → Use MAE for full training.")
-        print("     → Consider Hybrid: NLL for C2/D2 batches, MAE for A1/B1.")
-        recommendation = "MAE (NLL unstable)"
-    elif _isfinite(nll_score) and nll_score - max(mae_score, valid.get(mse_key, float("-inf"))) > NLL_WIN_THRESHOLD:
-        print(f"  ✅ NLL wins clearly ({nll_score:+.3f} dB, >{NLL_WIN_THRESHOLD:.0f} dB above others).")
-        print("     → Use poisson_gaussian_nll for full training.")
-        print("     → A1/B1 R²≈0.27 didn't destabilise the loss in practice.")
-        recommendation = "NLL (clear winner)"
-    elif _isfinite(mae_score) and mae_score >= nll_score - MAE_TIE_THRESHOLD:
-        print(f"  🟡 MAE ties or beats NLL (MAE={mae_score:+.3f}, NLL={nll_score:+.3f}).")
-        print("     → Use MAE for full training.")
-        print("     → Poisson tails dominate — median-targeting is more robust.")
-        recommendation = "MAE (ties NLL)"
-    elif best_loss == mse_key:
-        print(f"  🔵 MSE wins ({best_score:+.3f} dB). Unusual.")
-        print("     → Use MSE. Noise is closer to Gaussian than expected.")
-        recommendation = "MSE (unexpected winner)"
+
+    if not stable_scores:
+        print("  🔴 ALL runs are unstable (NaN losses or no val data).")
+        print("     Check --data path and val_stacks config.")
+        print("═" * 72 + "\n")
+        return
+
+    best_score = max(stable_scores.values())
+
+    # Build ranked list of losses within TIE_THRESHOLD of best,
+    # ordered by LOSS_PREFERENCE (most robust first).
+    top = sorted(
+        [(ln, sc) for ln, sc in stable_scores.items() if best_score - sc <= TIE_THRESHOLD],
+        key=lambda x: _pref_rank(x[0]),
+    )
+    recommendation_loss, recommendation_score = top[0]
+
+    # Check if NLL specifically is unstable.
+    nll_key   = next((ln for ln in scores if "nll" in ln.lower()), None)
+    nll_score = stable_scores.get(nll_key, float("-inf")) if nll_key else float("-inf")
+    nll_ok    = stable.get(nll_key, False) if nll_key else False
+
+    if nll_key and not nll_ok:
+        print(f"  🔴 NLL is UNSTABLE (NaN steps={nans.get(nll_key, '?')}).")
+        print(f"     NLL excluded from ranking.")
+
+    # Print winner logic.
+    if recommendation_loss == nll_key and nll_ok and _isfinite(nll_score):
+        others_max = max(
+            (sc for ln, sc in stable_scores.items() if "nll" not in ln.lower()),
+            default=float("-inf")
+        )
+        if nll_score - others_max > NLL_WIN_THRESHOLD:
+            print(f"  ✅ NLL wins clearly ({nll_score:+.3f} dB, >{NLL_WIN_THRESHOLD:.0f} dB above others).")
+            print("     → Use poisson_gaussian_nll for full training.")
+            print("     → R²≈0.27 on A1/B1 didn't destabilise the loss in practice.")
+        else:
+            print(f"  🟡 NLL leads but not by >{NLL_WIN_THRESHOLD:.0f} dB ({nll_score:+.3f} dB).")
+            print("     → Use poisson_gaussian_nll for full training.")
+            print("     → Monitor for instability if you add C2/D2 stacks later.")
+    elif recommendation_loss == "anscombe_mse":
+        print(f"  🟢 anscombe_mse wins/ties best ({recommendation_score:+.3f} dB).")
+        print("     → Use anscombe_mse for full training.")
+        print("     → Variance stabilisation was enough; full NLL not needed.")
+        print("     → This is the safest choice given nb10 R²≈0.001 on val stacks.")
+    elif recommendation_loss == "huber":
+        print(f"  🟡 Huber wins/ties best ({recommendation_score:+.3f} dB).")
+        print("     → Use huber for full training.")
+        print("     → Outlier-robust loss suits the mixed noise model on A1/B1.")
+    elif recommendation_loss == "mae":
+        print(f"  🟡 MAE wins/ties best ({recommendation_score:+.3f} dB).")
+        print("     → Use mae for full training.")
+        print("     → Poisson tails dominate; median-targeting is more robust.")
+    elif recommendation_loss == "mse":
+        print(f"  🔵 MSE wins ({recommendation_score:+.3f} dB). Somewhat unexpected.")
+        print("     → Use mse. Noise is closer to Gaussian than expected from nb10.")
     else:
-        print(f"  ✅ NLL wins ({nll_score:+.3f} dB). Not a blowout but ahead.")
-        print("     → Use poisson_gaussian_nll for full training.")
-        recommendation = "NLL (ahead)"
+        print(f"  ✅ {recommendation_loss} wins ({recommendation_score:+.3f} dB).")
+        print(f"     → Use {recommendation_loss} for full training.")
+
+    # Show all tied losses.
+    if len(top) > 1:
+        tied = [f"{ln} ({sc:+.3f})" for ln, sc in top[1:]]
+        print(f"     (Tied within {TIE_THRESHOLD:.1f} dB: {', '.join(tied)})")
 
     # Epoch count recommendation.
     print("\n  Epoch count:")
     for r in runs:
         trend = _loss_trend(r["epoch_loss"])
         n = len(r["epochs_logged"])
-        print(f"    [{r['loss_name']:25s}] trend={trend}  ({n} epochs logged)")
+        print(f"    [{r['loss_name']:26s}] trend={trend}  ({n} epochs logged)")
 
-    winner_run = next((r for r in runs if r["loss_name"] in recommendation.lower()
-                       or ("nll" in recommendation.lower() and "nll" in r["loss_name"].lower())), runs[0])
+    winner_run = next(
+        (r for r in runs if r["loss_name"] == recommendation_loss),
+        runs[0]
+    )
     winner_trend = _loss_trend(winner_run["epoch_loss"])
     if "still-dropping" in winner_trend:
-        print(f"\n  → Loss still dropping at epoch {max(winner_run['epochs_logged'])}.")
-        print("     Run 100 epochs for full training.")
+        last_ep = max(winner_run["epochs_logged"], default=0)
+        print(f"\n  → Loss still dropping at epoch {last_ep}. Run 100 epochs for full training.")
     elif "slowing" in winner_trend:
         print(f"\n  → Loss is slowing. 50 epochs likely sufficient.")
     else:
         print(f"\n  → Loss is flat. 30–50 epochs may suffice.")
-        print("     Check if val score stopped improving (check 'best' row in logs).")
+        print("     Check if val score stopped improving (see 'best' rows in logs).")
 
-    print(f"\n  RECOMMENDATION: {recommendation}")
-    print("═" * 68 + "\n")
+    print(f"\n  RECOMMENDATION: {recommendation_loss}")
+    print("═" * 72 + "\n")
 
 
 # --------------------------------------------------------------------------- #
@@ -308,8 +388,12 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("run_dirs", nargs="+", type=Path,
-                   help="one or more run directories (each has a train_*.jsonl inside)")
+    p.add_argument(
+        "run_dirs", nargs="+", type=Path,
+        help="one or more run directories (each has a train_*.jsonl inside); "
+             "pass 3 for a minimal ablation (nll mse mae) or 5 for the full "
+             "ablation (nll mse mae anscombe_mse huber)"
+    )
     p.add_argument("--stack", default="F1",
                    help="val stack to rank on (default: F1)")
     p.add_argument("--epoch", type=int, default=-1,
@@ -323,8 +407,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"WARNING: {rd} does not exist — skipped.", file=sys.stderr)
             continue
         try:
-            run = _parse_run(rd)
-            runs.append(run)
+            runs.append(_parse_run(rd))
         except FileNotFoundError as e:
             print(f"WARNING: {e}", file=sys.stderr)
 
@@ -333,10 +416,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     for run in runs:
-        print(f"\n{'─'*68}")
-        print(f"  Run: {run['run_dir'].name}")
+        print(f"\n{'─'*72}")
+        print(f"  Run:    {run['run_dir'].name}")
         print(f"  Config: {run['cfg_name']}  |  Loss: {run['loss_name']}")
-        print(f"  JSONL: {run['jsonl'].name}  |  Epochs: {run['epochs_logged']}")
+        print(f"  JSONL:  {run['jsonl'].name}  |  Epochs: {run['epochs_logged']}")
         _epoch_table(run, args.stack)
 
     _verdict(runs, args.stack, args.epoch)

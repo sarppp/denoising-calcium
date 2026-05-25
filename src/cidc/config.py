@@ -127,8 +127,9 @@ class AuxLossConfig:
 
 @dataclass
 class LossConfig:
-    name: str = "poisson_gaussian_nll"         # or: anscombe_mse, mse
+    name: str = "poisson_gaussian_nll"  # poisson_gaussian_nll | anscombe_mse | mse | mae | huber
     var_floor: float = 1.0
+    huber_delta: float = 1.0            # δ for Huber loss; ignored by other losses
     aux: dict[str, AuxLossConfig] = field(default_factory=dict)
     # ``aux`` is a dict keyed by loss name; empty = no aux losses.
 

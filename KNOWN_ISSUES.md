@@ -6,7 +6,40 @@ Any agent or human continuing this work should read this first.
 
 ---
 
-## Fixed (committed 2026-05-25)
+## Fixed (committed 2026-05-25, third batch)
+
+### BUG-07 · `anscombe_mse` in `_simple_loss` was identical to plain `mse` (SILENT BUG)
+**File:** `src/cidc/train.py:_simple_loss`  
+**What was wrong:** Every `step_*` function converts targets from Anscombe space back to
+raw ADU before calling `_simple_loss`. The `anscombe_mse` branch then computed
+`((pred - tgt) ** 2).mean()` on raw-ADU tensors — identical to `mse`. The docstring
+said "pred/tgt must already be in Anscombe space" but none of the call sites did that.
+So `loss.name: anscombe_mse` silently ran plain MSE throughout all previous sessions.  
+**Fix:** The forward Anscombe transform
+`z = (2/g) * sqrt(g*y + 3/8*g² + σ²)` is now applied inside the `anscombe_mse`
+branch of `_simple_loss` before computing MSE. Both pred and tgt are mapped to the
+unit-variance stabilised domain, then MSE is computed there.  
+**Why this matters:** nb10 showed R²≈0.001–0.24 for all val stacks — the Poisson-Gaussian
+model is badly misspecified. `anscombe_mse` is the principled loss for exactly this
+regime: it encodes the right inductive bias (noise scales with signal) without betting
+on an exact NLL model. After this fix, `anscombe_mse` is a genuinely distinct and
+arguably superior baseline compared to plain `mse`.
+
+### BUG-08 · `huber` loss not implemented; `huber_delta` not in schema
+**File:** `src/cidc/train.py:_simple_loss`, `src/cidc/config.py:LossConfig`  
+**What was wrong:** Huber loss was documented as a candidate in comments/KNOWN_ISSUES
+but not implemented. Specifying `loss.name: huber` would have fallen through to NLL.  
+**Fix:** Added `huber` branch in `_simple_loss` using `torch.nn.functional.huber_loss`.
+Added `huber_delta: float = 1.0` to `LossConfig`. All four `_simple_loss` call sites
+updated to pass `huber_delta=cfg.loss.huber_delta`.  
+**Added configs:** `configs/ablation_huber.yaml`, `configs/ablation_anscombe_mse.yaml`  
+**Verdict script:** `scripts/ablation_verdict.py` updated to handle N arms (not
+hardcoded 3), infer loss names from directory names, and produce correct decisions
+for all 5 losses including preference ranking on ties.
+
+---
+
+## Fixed (committed 2026-05-25, earlier batches)
 
 ### BUG-06 · F0 mixed into val_stacks — confusing and error-prone
 **File:** `src/cidc/config.py`, `src/cidc/train.py`, all 8 YAML configs  
@@ -135,38 +168,46 @@ Additional improvements in the same commit:
 
 ## Usage reference
 
-### Running the ablation (all 3 losses, probe only first)
+### Running the ablation (all 5 losses, probe only first)
 ```bash
 DATA=/app/workspace/data
 RUNS=/app/workspace/runs
 
-# Sanity check before committing
-uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll --probe-only
-uv run cidc train configs/ablation_mse.yaml --data $DATA --out $RUNS/mse --probe-only
-uv run cidc train configs/ablation_mae.yaml --data $DATA --out $RUNS/mae --probe-only
+# Sanity check: probe all 5 arms before committing GPU time
+uv run cidc train configs/ablation_nll.yaml          --data $DATA --out $RUNS/nll          --probe-only
+uv run cidc train configs/ablation_mse.yaml          --data $DATA --out $RUNS/mse          --probe-only
+uv run cidc train configs/ablation_mae.yaml          --data $DATA --out $RUNS/mae          --probe-only
+uv run cidc train configs/ablation_anscombe_mse.yaml --data $DATA --out $RUNS/anscombe_mse --probe-only
+uv run cidc train configs/ablation_huber.yaml        --data $DATA --out $RUNS/huber        --probe-only
 
-# If a run crashes, just re-run the same command — it auto-resumes from last.pt
-uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll
+# Full 10-epoch ablation (can be run in parallel on separate GPUs)
+uv run cidc train configs/ablation_nll.yaml          --data $DATA --out $RUNS/nll
+uv run cidc train configs/ablation_mse.yaml          --data $DATA --out $RUNS/mse
+uv run cidc train configs/ablation_mae.yaml          --data $DATA --out $RUNS/mae
+uv run cidc train configs/ablation_anscombe_mse.yaml --data $DATA --out $RUNS/anscombe_mse
+uv run cidc train configs/ablation_huber.yaml        --data $DATA --out $RUNS/huber
 
-# Force restart from scratch (ignore existing checkpoint)
-uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll --no-resume
+# If a run crashes, just re-run — it auto-resumes from last.pt
+# To force a fresh start: add --no-resume
 
-# Full 10-epoch ablation
-uv run cidc train configs/ablation_nll.yaml --data $DATA --out $RUNS/nll
-uv run cidc train configs/ablation_mse.yaml --data $DATA --out $RUNS/mse
-uv run cidc train configs/ablation_mae.yaml --data $DATA --out $RUNS/mae
-
-# Verdict
-python scripts/ablation_verdict.py $RUNS/nll $RUNS/mse $RUNS/mae --stack F1
+# Verdict (pass any subset of dirs; script handles N arms)
+python scripts/ablation_verdict.py $RUNS/nll $RUNS/mse $RUNS/mae $RUNS/anscombe_mse $RUNS/huber --stack F1
 ```
 
 ### Decision tree summary
-| val_F1_stSNR at epoch 10 | Action |
+| Result at epoch 10 | Action |
 |---|---|
-| NLL > others by >1 dB | NLL for full training |
-| MAE ties NLL (within 0.5 dB) | MAE for full training |
-| MSE wins | MSE (unusual — double-check) |
-| NLL has NaN steps | MAE (or Hybrid: NLL for C2/D2, MAE for A1/B1) |
+| NLL > all others by >1 dB AND stable | NLL for full training |
+| anscombe_mse ties NLL (within 0.5 dB) | anscombe_mse — safer, no noise model dependency |
+| MAE or Huber ties best | Use that loss — distributional assumptions too strong |
+| MSE wins | MSE (unusual — check tSNR didn't collapse) |
+| NLL has NaN steps | Discard NLL, use best stable loss |
+
+**Why 5 arms?** nb10 showed R²≈0.001 for F1 — the Poisson-Gaussian model doesn't fit
+the val stacks at all. `anscombe_mse` (fixed in this commit) encodes the right
+variance-vs-mean relationship without betting on exact NLL. Huber catches the case
+where outlier residuals dominate. Running all 5 takes ~5× the wall time of one arm
+but costs nothing extra — they can run on separate GPUs in parallel.
 
 Also check `tSNR` separately — a model that gains `sSNR` while losing `tSNR`
-scores zero net improvement.
+scores zero net improvement (stSNR = 0.5×sSNR + 0.5×tSNR).
