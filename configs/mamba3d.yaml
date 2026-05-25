@@ -1,27 +1,49 @@
-# 3-D U-Net with bi-directional Mamba SSM at the bottleneck.
-# Schema identical to n2v3d.yaml.
+# ────────────────────────────────────────────────────────────────────────────
+# Mamba3D base — ~1M params (base_ch=16, depth=3 + Mamba SSM bottleneck)
+#
+# Why Mamba? SSM handles long-range temporal dependencies in O(T) vs O(T²).
+# Potentially better tSNR on long calcium transients (τ₀.₅=46 frames).
+#
+# TWO MODES — change the marked lines depending on what you're running:
+#
+#   MODEL SIZE TEST (L40S, 10 epochs, fast comparison):
+#     data.patch:         [64, 64, 64]
+#     data.stride:        [16, 32, 32]
+#     data.batch_size:    32
+#     training.epochs:    10
+#
+#   FULL TRAINING (L40S, inference on T4):
+#     data.patch:         [128, 128, 128]
+#     data.stride:        [32, 64, 64]
+#     data.batch_size:    16
+#     training.epochs:    100
+#     inference.tile:     [128, 128, 128]
+#     inference.overlap:  [32, 16, 16]
+#
+# Requires mamba-ssm: uv pip install -e '.[mamba]'  (needs nvcc in PATH)
+# ────────────────────────────────────────────────────────────────────────────
+
 name: mamba3d_v1
 
 model:
   name: mamba3d
   kwargs:
-    # 3-D U-Net skeleton.
     in_ch:   1
     base_ch: 16
-    depth:   3                           # bottleneck at 2^3 downsampling
+    depth:   3
     kernel:  3
     pool:    2
-    # Mamba bottleneck.
-    d_state:       16                    # SSM hidden-state dim per channel
-    d_conv:         4                    # local 1-D causal conv width
-    expand:         2                    # inner expansion factor inside each Mamba block
-    n_layers:       2                    # stacked Mamba blocks at bottleneck
-    bidirectional:  true                 # forward + reverse over the flattened volume
+    d_state:      16                    # SSM hidden-state dim per channel
+    d_conv:        4                    # local 1-D causal conv width
+    expand:        2                    # inner expansion factor
+    n_layers:      2                    # stacked Mamba blocks at bottleneck
+    bidirectional: true                 # forward + reverse over temporal axis
 
+# ─── data ───────────────────────────────────────────────────────────────────
 data:
-  patch:       [64, 128, 128]
-  stride:      [16, 64, 64]
-  batch_size:  16                        # L40S: 16 | T4: 8
+  patch:       [64, 64, 64]            # MODEL SIZE TEST — change to [128,128,128] for full training
+  stride:      [16, 32, 32]            # MODEL SIZE TEST — change to [32,64,64] for full training
+  batch_size:  32                      # MODEL SIZE TEST — change to 16 for full training
   num_workers: 4
   samples_per_epoch: 2000
   train_stacks: [A1, B1, C2, D2]
@@ -32,17 +54,18 @@ data:
   rot90:            true
   temporal_reverse: true
 
+# ─── training ───────────────────────────────────────────────────────────────
 training:
   optimizer: adamw
-  lr: 2.0e-4                             # Mamba is a little more sensitive to lr
+  lr: 2.0e-4                            # Mamba is more sensitive to lr than N2V3D
   weight_decay: 1.0e-4
   scheduler: cosine_restarts
   restarts: 3
-  epochs: 10    # ← 10 for model-size test; change to 100 for full training
-  warmup_steps: 1000                     # longer warmup helps Mamba converge
+  epochs: 10                            # MODEL SIZE TEST — change to 100 for full training
+  warmup_steps: 1000                    # longer warmup helps Mamba converge
   grad_clip: 1.0
-  grad_accum: 1                          # L40S: 1 | T4: change to 2, batch_size: 8
-  grad_ckpt:  false
+  grad_accum: 1                         # L40S: always 1
+  grad_ckpt: false                      # base model: not needed
   ema_decay: 0.999
   amp: true
   seed: 0
@@ -50,13 +73,17 @@ training:
   ckpt_every: 1
   early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
 
+# ─── loss ───────────────────────────────────────────────────────────────────
 loss:
-  name: huber
+  name: huber                           # ✅ winner from ablation
   var_floor: 1.0
-  huber_delta: 1.0
+  huber_delta: 1.0                      # default=1.0 in config.py — safe to omit, but explicit is clearer
   aux: {}
 
+# ─── inference ──────────────────────────────────────────────────────────────
 inference:
-  tile:    [64, 128, 128]
-  overlap: [16, 16, 16]
-  tta:     { rotations: 4, flips: true }
+  tile:    [64, 64, 64]                 # MODEL SIZE TEST — change to [128,128,128] for full training
+  overlap: [16, 16, 16]                 # MODEL SIZE TEST — change to [32,16,16] for full training
+  tta:
+    rotations: 4
+    flips: true

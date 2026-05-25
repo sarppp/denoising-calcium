@@ -1,27 +1,26 @@
-# N2V3D large model — for model-size ablation after loss ablation.
+# ────────────────────────────────────────────────────────────────────────────
+# N2V3D large — ~4M params (base_ch=32, depth=4)
 #
-# Motivation
-# ----------
-# The base config (n2v3d.yaml) uses base_ch=16, depth=3 → ~0.5M params.
-# This is small for a 3-D denoising problem. Larger models have more
-# representational capacity to separate signal from noise, especially
-# at the bottleneck where temporal context is integrated.
+# TWO MODES — change the marked lines depending on what you're running:
 #
-# base_ch=32, depth=4 → ~4M params — 8× more capacity.
-# Fits on 16GB T4 with batch_size=8 and grad_ckpt=true.
+#   MODEL SIZE TEST (L40S, 10 epochs, fast comparison):
+#     data.patch:         [64, 64, 64]
+#     data.stride:        [16, 32, 32]
+#     data.batch_size:    32
+#     training.epochs:    10
+#     training.grad_ckpt: false   ← L40S has enough VRAM even for large
 #
-# When to use
-# -----------
-# 1. After the 5-arm loss ablation finishes, copy the winning loss.name
-#    here and run a 10-epoch comparison: n2v3d (base) vs n2v3d_large.
-# 2. If large wins by >1 dB on val_F1_stSNR, use it for the full run.
-# 3. If large wins by <1 dB or ties: stick with base (faster, less risk
-#    of overfitting on only A1/B1 training data).
+#   FULL TRAINING (L40S, inference on T4):
+#     data.patch:         [128, 128, 128]
+#     data.stride:        [32, 64, 64]
+#     data.batch_size:    16
+#     training.epochs:    100
+#     training.grad_ckpt: false   ← still fine on L40S
+#     inference.tile:     [128, 128, 128]
+#     inference.overlap:  [32, 16, 16]
 #
-# Memory note
-# -----------
-# Peak VRAM with patch=[64,128,128], batch=8, grad_ckpt=true: ~10–12 GB.
-# Fits T4 (16GB). If OOM: reduce batch_size to 4 or enable grad_ckpt.
+# grad_accum: 1 for both — L40S has enough VRAM.
+# ────────────────────────────────────────────────────────────────────────────
 
 name: n2v3d_large
 
@@ -29,15 +28,16 @@ model:
   name: n2v3d
   kwargs:
     in_ch:    1
-    base_ch:  32           # 2× base (16→32), 8× more params overall
-    depth:    4            # extra resolution level; wider bottleneck
+    base_ch:  32                         # 2× base → ~4M params (8× more than base)
+    depth:    4                          # extra resolution level; wider bottleneck
     kernel:   3
     pool:     2
 
+# ─── data ───────────────────────────────────────────────────────────────────
 data:
-  patch:       [64, 128, 128]   # T4 default — change to [128,128,128] on L40S (see below)
-  stride:      [16, 64, 64]     # on L40S with patch=[128,128,128]: use [32,64,64]
-  batch_size:  8                # T4: 8 | A10G/RTX3090: 16 | A100 40GB: 32 | L40S: 16
+  patch:       [64, 64, 64]             # MODEL SIZE TEST — change to [128,128,128] for full training
+  stride:      [16, 32, 32]             # MODEL SIZE TEST — change to [32,64,64] for full training
+  batch_size:  32                       # MODEL SIZE TEST — change to 16 for full training
   num_workers: 4
   samples_per_epoch: 2000
   train_stacks: [A1, B1, C2, D2]
@@ -48,44 +48,36 @@ data:
   rot90: true
   temporal_reverse: true
 
+# ─── training ───────────────────────────────────────────────────────────────
 training:
   optimizer: adamw
   lr: 3.0e-4
   weight_decay: 1.0e-4
   scheduler: cosine_restarts
   restarts: 3
-  epochs: 10    # ← 10 for model-size test; change to 100 for full training
+  epochs: 10                            # MODEL SIZE TEST — change to 100 for full training
   warmup_steps: 500
   grad_clip: 1.0
-  grad_accum: 2            # T4: 2 | L40S/A100: change to 1 and raise batch_size
-  grad_ckpt: true          # T4: true (saves ~40% VRAM, costs ~20% speed) | L40S: false
+  grad_accum: 1                         # L40S: always 1
+  grad_ckpt: false                      # L40S: not needed even for large model
   ema_decay: 0.999
   amp: true
   seed: 0
   log_every: 50
   ckpt_every: 5
-  early_stop: { metric: stsnr_val, patience: 10, higher_is_better: true }
+  early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
 
-# ── L40S (48 GB) full recipe ──────────────────────────────────────────────────
-# data:
-#   patch:      [128, 128, 128]
-#   stride:     [32, 64, 64]
-#   batch_size: 16
-# training:
-#   epochs:     100
-#   grad_accum: 1
-#   grad_ckpt:  false
-# ─────────────────────────────────────────────────────────────────────────────
-
+# ─── loss ───────────────────────────────────────────────────────────────────
 loss:
-  name: poisson_gaussian_nll   # ← REPLACE with winning loss from ablation_verdict.py
+  name: huber                           # ✅ winner from ablation
   var_floor: 1.0
-  huber_delta: 1.0
+  huber_delta: 1.0                      # default=1.0 in config.py — safe to omit, but explicit is clearer
   aux: {}
 
+# ─── inference ──────────────────────────────────────────────────────────────
 inference:
-  tile: [64, 128, 128]
-  overlap: [16, 16, 16]
+  tile:    [64, 64, 64]                 # MODEL SIZE TEST — change to [128,128,128] for full training
+  overlap: [16, 16, 16]                 # MODEL SIZE TEST — change to [32,16,16] for full training
   tta:
-    rotations: 4          # 4 × 90° rotations in H×W plane
-    flips: true           # also flip H → 4 × 2 = 8 augmentations total
+    rotations: 4
+    flips: true

@@ -1,57 +1,50 @@
 # ────────────────────────────────────────────────────────────────────────────
-# CIDC25 — canonical config schema. Uncomment / change values to switch
-# between any of the 5 models: deepinterp | n2v3d | deepcad | mamba3d | pinn
+# N2V3D base — ~0.5M params (base_ch=16, depth=3)
 #
-# All configs share this exact schema. Unknown keys are REJECTED at load
-# time (typo safety). Other configs (deepinterp.yaml, mamba3d.yaml, ...)
-# differ only in `model.name` and `model.kwargs`; this file documents
-# every knob once.
+# TWO MODES — change the marked lines depending on what you're running:
+#
+#   MODEL SIZE TEST (L40S, 10 epochs, fast comparison):
+#     data.patch:         [64, 64, 64]
+#     data.stride:        [16, 32, 32]
+#     data.batch_size:    32
+#     training.epochs:    10
+#
+#   FULL TRAINING (L40S, inference on T4):
+#     data.patch:         [128, 128, 128]
+#     data.stride:        [32, 64, 64]
+#     data.batch_size:    16
+#     training.epochs:    100
+#     inference.tile:     [128, 128, 128]
+#     inference.overlap:  [32, 16, 16]
+#
+# grad_accum: 1 and grad_ckpt: false for both — L40S has enough VRAM.
 # ────────────────────────────────────────────────────────────────────────────
 
-name: n2v3d_v1                           # free-form run id (ckpts, logs)
+name: n2v3d_v1
 
-# ─── model ──────────────────────────────────────────────────────────────────
 model:
-  name: n2v3d                            # deepinterp | n2v3d | deepcad | mamba3d | pinn
+  name: n2v3d
   kwargs:
-    # Common 3-D U-Net knobs (n2v3d, deepcad, mamba3d):
     in_ch:    1
     base_ch:  16                         # channels at level 0; doubles each level
     depth:    3                          # number of resolution levels
     kernel:   3
     pool:     2
 
-    # ── deepinterp-specific (uncomment if model.name: deepinterp) ──────────
-    # half_context: 6                    # K; input is (B, 2K, H, W)
-
-    # ── mamba3d-specific (uncomment if model.name: mamba3d) ────────────────
-    # d_state:       16                  # SSM hidden state dim per channel
-    # d_conv:         4                  # local 1-D causal conv width
-    # expand:         2                  # inner expansion factor in Mamba block
-    # n_layers:       2                  # bi-directional Mamba blocks at bottleneck
-    # bidirectional:  true
-
-    # ── pinn-specific (uncomment if model.name: pinn) ──────────────────────
-    # backbone:
-    #   name: n2v3d                      # any of deepinterp|n2v3d|deepcad|mamba3d
-    #   kwargs: { in_ch: 1, base_ch: 16, depth: 3, kernel: 3, pool: 2 }
-    # tau_range:    [5.0, 200.0]         # clamp range for per-pixel τ (frames)
-    # baseline_from: head                # 'head' | 'median'
-
 # ─── data ───────────────────────────────────────────────────────────────────
 data:
-  patch:       [64, 128, 128]            # [T, H, W] — T=64 > τ₀.₅=46 (nb01); T=32 was too short
-  stride:      [16, 64, 64]              # patch stride over each stack
-  batch_size:  16            # L40S: 16 | T4: 8 (with grad_accum=2)
+  patch:       [64, 64, 64]             # MODEL SIZE TEST — change to [128,128,128] for full training
+  stride:      [16, 32, 32]             # MODEL SIZE TEST — change to [32,64,64] for full training
+  batch_size:  32                       # MODEL SIZE TEST — change to 16 for full training
   num_workers: 4
-  samples_per_epoch: 2000   # 2000÷8=250 steps/epoch; 100 epochs ≈ ~8h on T4
-  train_stacks: [A1, B1, C2, D2]         # train only on training stacks
-  ref_stack:   F0                          # clean ground truth — scored against, never trained on
-  val_stacks:  [F1, F2, F3]               # noisy stacks; F3=OOD Task-2 (gain≈991)
+  samples_per_epoch: 2000
+  train_stacks: [A1, B1, C2, D2]
+  ref_stack:   F0                       # clean ground truth — never trained on, scored against
+  val_stacks:  [F1, F2, F3]            # F3 = OOD Task-2 (gain≈991)
   gain_aug:
     enabled:           true
-    log_uniform_range: [20.0, 2000.0]    # covers level-1..3 and beyond (F3 = 991)
-    prob:              0.5               # fraction of batches to resample noise
+    log_uniform_range: [20.0, 2000.0]  # covers all gain levels including F3=991
+    prob:              0.5
   flip:             true
   rot90:            true
   temporal_reverse: true
@@ -63,43 +56,44 @@ training:
   weight_decay:  1.0e-4
   scheduler:     cosine_restarts
   restarts:      3
-  epochs:        10     # ← 10 for model-size test; change to 100 for full training
+  epochs:        10                     # MODEL SIZE TEST — change to 100 for full training
   warmup_steps:  500
   grad_clip:     1.0
-  grad_accum:    1                       # L40S: 1 | T4: change to 2 and batch_size: 8
-  grad_ckpt:     false                   # base model fits fine without it; true only for large (depth=4)
+  grad_accum:    1                      # L40S: always 1 (no accumulation needed)
+  grad_ckpt:     false                  # base model: never needed
   ema_decay:     0.999
-  amp:           true                    # mixed-precision (bf16 where possible)
+  amp:           true
   seed:          0
   log_every:     50
   ckpt_every:    1
   early_stop:
     metric:            stsnr_val
-    patience:          5
+    patience:          5                # stops training after 5 epochs with no improvement
     higher_is_better:  true
 
 # ─── loss ───────────────────────────────────────────────────────────────────
 loss:
-  name: huber                            # winner from ablation — poisson_gaussian_nll | anscombe_mse | mse | mae | huber
+  name: huber                           # ✅ winner from ablation
   var_floor: 1.0
-  aux:                                   # dict of name -> { enabled, weight, extras }
+  huber_delta: 1.0                      # default=1.0 in config.py — safe to omit, but explicit is clearer
+  aux:
     pinn:
-      enabled: false                     # only meaningful for model.name: pinn
+      enabled: false
       weight:  0.01
       extras:
-        sparsity_l1:    0.005            # λ on |s(t)| (0.001–0.01 recommended)
-        ode_dt:         1.0              # frame
-        detach_input:   false            # if true: reconstruct from denoised.detach()
+        sparsity_l1:    0.005
+        ode_dt:         1.0
+        detach_input:   false
     deepinterp:
-      enabled: false                     # N2V-3D + DeepInterp dual-supervision
+      enabled: false
       weight:  0.5
       extras:
-        drop_center_prob: 0.1            # fraction of batches with centre-frame drop
+        drop_center_prob: 0.1
 
 # ─── inference ──────────────────────────────────────────────────────────────
 inference:
-  tile:    [64, 128, 128]                # match data.patch
-  overlap: [16, 16, 16]                  # must divide tile evenly-ish
+  tile:    [64, 64, 64]                 # MODEL SIZE TEST — change to [128,128,128] for full training
+  overlap: [16, 16, 16]                 # MODEL SIZE TEST — change to [32,16,16] for full training
   tta:
-    rotations: 4                         # 4 × 90° rotations in H×W → 4 augmentations
-    flips:     true                      # also flip H → 4×2 = 8 augmentations (D4 group)
+    rotations: 4                        # 4 × 90° rotations in H×W plane
+    flips:     true                     # also flip → 4×2=8 augmentations (D4 group)

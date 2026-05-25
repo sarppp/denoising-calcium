@@ -42,9 +42,6 @@ for the full bug history.
   (T=32 < τ₀.₅=46; T=64 captures 1.4× the decay length)
 - `ref_stack: F0` separated from `val_stacks` in all configs
 - F3 (OOD Task-2) added to `val_stacks` in all configs
-- `n2v3d.yaml` batch=16 → batch=8 + grad_accum=2 to prevent T4 OOM
-  (patch=[64,128,128] × batch=16 = ~13.7 GiB; halving batch keeps effective
-  batch=16 via grad_accum while cutting peak VRAM to ~6.8 GiB)
 - `n2v3d.yaml` `samples_per_epoch: 2000` added (default was 10,000 → 52h on T4;
   2000 → ~8h overnight)
 
@@ -56,28 +53,82 @@ for the full bug history.
   - cc < 8.0 (T4, V100) → `float16` (2–4× step speedup on T4)
 - Expected: ~50 min/arm → ~15–20 min/arm after `git pull` on remote
 
-### Large model configs added
-- `configs/n2v3d_large.yaml` — base_ch=32, depth=4, ~4M params (8× base)
-  batch=8, grad_accum=2, grad_ckpt=true; fits T4 16 GB
-- `configs/mamba3d_large.yaml` — same backbone + Mamba SSM bottleneck
-  (n_layers=4, bidirectional); batch=4, grad_accum=4; requires mamba-ssm installed
-- Both have TTA enabled (rotations=4, flips=true) and loss.name placeholder
+### All 4 model configs rewritten (two-mode structure)
+- `configs/n2v3d.yaml`, `configs/n2v3d_large.yaml`, `configs/mamba3d.yaml`,
+  `configs/mamba3d_large.yaml` — all rewritten with inline comments showing
+  exactly what to change for MODEL SIZE TEST vs FULL TRAINING
+- `loss.name: huber` set in all 4 (winner from ablation)
+- `inference.tile: [64,64,64]` for model size test, `[128,128,128]` for full training
+- **Full training batch sizes** (L40S, patch=[128,128,128]):
+  - n2v3d base / large / mamba base: `batch=16`, `grad_accum=1`, `grad_ckpt=false`
+  - mamba large: `batch=8` (SSM hidden states need extra VRAM — see below), `grad_accum=1`
+- **Model size test** (all 4): `batch=32`, `patch=[64,64,64]`, `epochs=10`, identical settings
+
+### cloud_setup.sh fixed (3 bugs)
+1. `uv sync` → `uv venv --python 3.12 && uv sync --python 3.12`
+   (Lightning Studio had Python 3.14; PyTorch has no 3.14 wheels)
+2. Probe command pointed at dead `training/` directory → now uses
+   `uv run cidc train configs/ablation_mse.yaml ... --probe-only`
+3. Echo instructions updated to show full 5-arm ablation workflow
+
+### pyproject.toml fixed (2 bugs)
+1. `requires-python = ">=3.12"` → `">=3.12,<3.14"` (prevents uv grabbing 3.14)
+2. `packages = ["workspace/src/cidc"]` → `["src/cidc"]` (path is relative to
+   pyproject.toml location; works for both local and remote `uv sync`)
+
+### scripts/score.py fixed
+- TTA was never applied — `denoise_stack()` called without `tta_rotations/tta_flips`
+- Fixed: reads `cfg.inference.tta.rotations` and `cfg.inference.tta.flips` from config
+- Added `--data` flag: scores F1, F2, F3 vs F0 all at once with summary table
+- Added `--no-tta` flag for quick checks during training
+- Always uses EMA weights (`state["ema"]`) for inference
+
+### scripts/ablation_verdict.py fixed
+- `LOSS_PREFERENCE` order had `mae` before `huber` — script picked mae even when
+  huber scored higher (within 0.5 dB tie-break window)
+- Fixed: `huber` now appears before `mae` in preference list
+
+### Remote GPU — Mamba install fix (L40S, CUDA 12.1)
+
+`mamba-ssm` build fails on some remote environments because newer versions pull
+CUDA 13 deps that require GLIBC 2.32 (not available on Lightning Studio).
+
+**Working install** — three things must be combined:
+```bash
+CUDA_HOME=/usr/local/cuda-12.1 MAX_JOBS=4 \
+uv pip install "mamba-ssm>=2.2.2" "causal-conv1d>=1.4.0" \
+  --no-binary mamba-ssm,causal-conv1d \
+  --no-build-isolation \
+  --python .venv/bin/python \
+  --exclude-newer 2025-01-01
+```
+
+Why each flag is needed:
+1. `CUDA_HOME=/usr/local/cuda-12.1` — forces build to use system CUDA 12.1 compiler,
+   not the downloaded cu13 libs that need GLIBC 2.32
+2. `--exclude-newer 2025-01-01` — pins to mamba-ssm 2.2.4 instead of 2.3.x,
+   whose source also pulls cu13 deps
+3. `--python .venv/bin/python` — installs into the right env so `uv run` doesn't undo it
+
+Confirmed working versions: `torch 2.6.0+cu124`, `mamba_ssm 2.2.4`, `MambaUNet3D` imports cleanly.
+
+Verify with:
+```bash
+uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
+```
 
 ### Documentation
 - `README.md` — fully rewritten, all inaccuracies fixed
 - `KNOWN_ISSUES.md` — all 10 bugs documented (BUG-01 through BUG-10)
 - `NEXT_STEPS.md` — this file
 
----
-
-## 🔄 Currently running
-
-**5-arm loss ablation** (10 epochs each, sequential on T4):
-
+### Loss ablation — completed ✅
+- Ran on T4, 10 epochs each, patch=[64,64,64], batch=8
+- **Winner: `huber`** — beats mae on both F1 (+0.020 vs -0.002) and F3 OOD (+0.376 vs +0.249)
+- anscombe_mse catastrophically unstable on F3 (noise model mismatch, R²=0.001–0.24 from nb10)
+- mse and nll never left negative territory — distributional mismatch too large
+- Commands used:
 ```bash
-export DATA=.../data/train
-export RUNS=.../runs
-
 uv run cidc train configs/ablation_nll.yaml          --data $DATA --out $RUNS/nll
 uv run cidc train configs/ablation_mse.yaml          --data $DATA --out $RUNS/mse
 uv run cidc train configs/ablation_mae.yaml          --data $DATA --out $RUNS/mae
@@ -85,13 +136,28 @@ uv run cidc train configs/ablation_anscombe_mse.yaml --data $DATA --out $RUNS/an
 uv run cidc train configs/ablation_huber.yaml        --data $DATA --out $RUNS/huber
 ```
 
-Expected: ~15–20 min per arm after fp16 fix (was ~50 min), ~1.5 hours total on T4.  
-**Important:** do `git pull` on the remote before running remaining arms to get the fp16 fix.  
+---
+
+## 🔄 Currently running
+
+**Model size + type test** (10 epochs each, sequential on L40S, patch=[64,64,64], batch=32):
+
+```bash
+export DATA=.../data/train
+export RUNS=.../runs
+
+uv run cidc train configs/n2v3d.yaml         --data $DATA --out $RUNS/base
+uv run cidc train configs/n2v3d_large.yaml   --data $DATA --out $RUNS/large
+uv run cidc train configs/mamba3d.yaml       --data $DATA --out $RUNS/mamba_base
+uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba_large
+```
+
 If a run crashes: re-run same command — auto-resumes from `last.pt`.
 
 ---
 
-## ⏳ Next: after ablation finishes
+## ⏳ Next: after ablation finishes 
+## FINISHED! READ BELOW
 
 ### Step 1 — Read the verdict
 
@@ -172,10 +238,10 @@ uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba_larg
 Read the verdict on **both** F1 and F3:
 ```bash
 uv run python scripts/ablation_verdict.py \
-    $RUNS/base $RUNS/large $RUNS/mamba_base $RUNS/mamba_large --stack F1
+    $RUNS/n2v3d_base $RUNS/n2v3d_large $RUNS/mamba_base $RUNS/mamba_large --stack F1
 
 uv run python scripts/ablation_verdict.py \
-    $RUNS/base $RUNS/large $RUNS/mamba_base $RUNS/mamba_large --stack F3
+    $RUNS/n2v3d_base $RUNS/n2v3d_large $RUNS/mamba_base $RUNS/mamba_large --stack F3
 ```
 
 **Decision rules:**
@@ -193,7 +259,8 @@ loss:
 data:
   patch:      [128, 128, 128]   # full temporal context (T=128 > 2×τ₀.₅=46)
   stride:     [32, 64, 64]
-  batch_size: 16                # L40S with larger patch
+  batch_size: 16                # L40S with larger patch (8 for mamba_large — see below)
+  samples_per_epoch: 4000       # 4000÷16=250 steps/epoch = ablation density (mamba_large: 2000÷8=250)
 
 training:
   epochs:     100               # early stopping (patience=5) will stop around ep 30–50
@@ -204,6 +271,36 @@ inference:
   tile:    [128, 128, 128]      # T4 inference: ~2GB per tile, well within 16GB
   overlap: [32, 16, 16]
 ```
+
+### samples_per_epoch — why 4000 (and 2000 for mamba_large)
+
+Target: **250 steps/epoch** — matches the ablation training density exactly.
+
+| model | batch | samples_per_epoch | steps/epoch |
+|---|---|---|---|
+| n2v3d base | 16 | 4000 | 250 ✅ |
+| n2v3d large | 16 | 4000 | 250 ✅ |
+| mamba base | 16 | 4000 | 250 ✅ |
+| **mamba large** | **8** | **2000** | **250 ✅** |
+
+Mamba large uses `batch=8` due to SSM hidden-state VRAM. To keep the same 250 steps/epoch,
+halve `samples_per_epoch` to 2000. Using 4000 with batch=8 gives 500 steps/epoch — 2× more
+work per epoch than all other models.
+
+### Why mamba large uses batch=8 (not 16)
+
+At `patch=[128,128,128]` full training, Mamba large has **two** memory costs simultaneously:
+
+1. **U-Net activations** — same as N2V3D large (conv feature maps at each level)
+2. **SSM hidden states** — extra tensors proportional to `batch × channels × T` at the
+   bottleneck, unique to Mamba (`d_state=16`, `n_layers=4`, `bidirectional=true`)
+
+With `batch=16`, those two together exceed L40S VRAM. Dropping to `batch=8` cuts both
+in half and keeps it stable.
+
+N2V3D large at `batch=16` is fine because it has no SSM — just convolutions.
+
+> For Mamba install issues on remote GPUs, see `MAMBA_INSTALL.md`.
 
 ```bash
 # Replace with whichever config won Step 3
