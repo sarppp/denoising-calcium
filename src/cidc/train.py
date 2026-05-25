@@ -377,19 +377,20 @@ def train(cfg, data_root: Path, out_dir: Path, probe_only: bool = False) -> None
         log.log(kind="epoch", epoch=epoch, train_loss=avg_loss, dt_sec=dt)
 
         # Validation with EMA weights.
-        val_paths = [data_root.parent / "val" / f"{name}.tif" for name in cfg.data.val_stacks]
-        ref_path = next((p for p in val_paths if p.stem == "F0"), None)
-        if ref_path is None or not ref_path.exists():
-            log.log(kind="val-skip", reason="F0 reference not available")
+        val_dir = data_root.parent / "val"
+        ref_path = val_dir / f"{cfg.data.ref_stack}.tif"
+        if not ref_path.exists():
+            log.log(kind="val-skip", reason=f"ref_stack {cfg.data.ref_stack!r} not found at {ref_path}")
             continue
         ref = np.asarray(tifffile.memmap(ref_path), dtype=np.float32)
+        val_paths = [val_dir / f"{name}.tif" for name in cfg.data.val_stacks]
         backup = ema.copy_to(model)
         try:
             model.eval()
-            # Evaluate on F1/F2 (cheap subset: first 128 frames).
+            # Evaluate each val stack (cheap subset: first 128 frames).
             scores = []
             for vp in val_paths:
-                if vp.stem == "F0" or not vp.exists():
+                if not vp.exists():
                     continue
                 noisy = np.asarray(tifffile.memmap(vp), dtype=np.float32)[: min(128, ref.shape[0])]
                 with Timer() as t:

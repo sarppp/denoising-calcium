@@ -8,6 +8,20 @@ Any agent or human continuing this work should read this first.
 
 ## Fixed (committed 2026-05-25)
 
+### BUG-06 · F0 mixed into val_stacks — confusing and error-prone
+**File:** `src/cidc/config.py`, `src/cidc/train.py`, all 8 YAML configs  
+**What was wrong:** `val_stacks` contained F0 alongside F1/F2/F3. F0 is the clean
+ground-truth reference, not a noisy stack to be scored. The training loop worked
+around this with `if vp.stem == "F0": continue` and a `next(... if p.stem == "F0")`
+search — hardcoded strings, not config-driven.  
+**Fix:** Added `ref_stack: str = "F0"` as a dedicated field in `DataConfig`. The
+`train.py` validation block now uses `cfg.data.ref_stack` directly, and F0 is
+removed from every `val_stacks` list in every YAML. No hardcoded "F0" strings remain
+in the training logic.  
+**Impact:** Cleaner schema. Any stack can now be the reference by changing one field.
+
+---
+
 ### BUG-01 · F3 missing from val_stacks (CRITICAL)
 **File:** `src/cidc/config.py:80`, all ablation YAMLs, `configs/n2v3d.yaml`  
 **What was wrong:** `val_stacks` defaulted to `["F0", "F1", "F2"]`. F3 is the OOD

@@ -12,7 +12,8 @@ data:
   num_workers: 4
   samples_per_epoch: 2000
   train_stacks: [A1, B1]
-  val_stacks:  [F0, F1, F2, F3]   # F0=clean ref; F3=OOD Task-2 stack
+  ref_stack:   F0
+  val_stacks:  [F1, F2, F3]       # noisy stacks scored against ref_stack; F3=OOD Task-2
   gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
   flip: true
   rot90: true

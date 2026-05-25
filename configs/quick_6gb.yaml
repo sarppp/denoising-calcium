@@ -24,7 +24,8 @@ data:
   num_workers: 2
   samples_per_epoch: 256                   # tiny for a 2-min smoke test
   train_stacks: [A1]                       # single stack for fast iteration
-  val_stacks:  [F0, F1]
+  ref_stack:   F0
+  val_stacks:  [F1]
   gain_aug:
     enabled:           true
     log_uniform_range: [20.0, 300.0]
