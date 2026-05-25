@@ -29,7 +29,7 @@ dependencies = [
 #     uv pip install -e '.[mamba]'
 # Requires nvcc in PATH at build time.
 mamba = [
-    "mamba-ssm>=2.2.2",
+    "mamba-ssm>=2.2.2,<2.3.0",
     "causal-conv1d>=1.4.0",
 ]
 
@@ -42,6 +42,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cidc"]
+
+[tool.uv]
+no-binary-package = ["mamba-ssm", "causal-conv1d"]
+no-build-isolation-package = ["mamba-ssm", "causal-conv1d"]
 
 [[tool.uv.index]]
 name = "pytorch-cu124"

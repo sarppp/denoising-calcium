@@ -7,12 +7,7 @@ Guide for any agent or human picking up this project on a fresh remote GPU insta
 ## TL;DR — the one command that works
 
 ```bash
-CUDA_HOME=/usr/local/cuda-12.1 MAX_JOBS=4 \
-uv pip install "mamba-ssm>=2.2.2" "causal-conv1d>=1.4.0" \
-  --no-binary mamba-ssm,causal-conv1d \
-  --no-build-isolation \
-  --python .venv/bin/python \
-  --exclude-newer 2025-01-01
+CUDA_HOME=/usr/local/cuda-12.1 MAX_JOBS=4 uv sync --extra mamba
 ```
 
 Then verify:
@@ -20,17 +15,25 @@ Then verify:
 uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
 ```
 
+`--no-binary`, `--no-build-isolation`, and `--exclude-newer` are now baked into
+`pyproject.toml` (`no-binary-package`, `no-build-isolation-package`, and the
+`<2.3.0` pin), so you no longer need to pass them manually.
+
 ---
 
-## Why each flag is needed
+## Why `CUDA_HOME` is still required
 
 | Flag | What goes wrong without it |
 |---|---|
 | `CUDA_HOME=/usr/local/cuda-12.1` | Build pulls CUDA 13 libraries that require GLIBC 2.32; system only has GLIBC 2.31 → `ImportError: version 'GLIBC_2.32' not found` |
-| `--no-binary mamba-ssm,causal-conv1d` | Pre-built wheels also link GLIBC 2.32 → same error |
-| `--no-build-isolation` | The isolated build environment has no torch; `setup.py` fails with `ModuleNotFoundError: No module named 'torch'` |
-| `--python .venv/bin/python` | On Lightning AI studios, bare `uv pip install` targets the system conda env, not the project `.venv`; the package becomes invisible to `uv run` |
-| `--exclude-newer 2025-01-01` | mamba-ssm ≥2.3.0 pulls `nvidia-cuda-runtime==13.x` even when built from source, which brings the GLIBC 2.32 requirement back; this pins to 2.2.4 |
+
+The other flags that used to be needed are now handled automatically by uv via `pyproject.toml`:
+
+| What it does | How it's configured |
+|---|---|
+| Build from source (no pre-built wheels) | `no-binary-package = ["mamba-ssm", "causal-conv1d"]` |
+| Build sees torch from `.venv` | `no-build-isolation-package = ["mamba-ssm", "causal-conv1d"]` |
+| Pins to mamba-ssm < 2.3.0 (avoids GLIBC 2.32 via nvidia-cuda-runtime 13.x) | `"mamba-ssm>=2.2.2,<2.3.0"` in optional deps |
 
 ---
 
