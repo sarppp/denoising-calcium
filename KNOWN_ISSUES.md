@@ -6,6 +6,33 @@ Any agent or human continuing this work should read this first.
 
 ---
 
+## Fixed (committed 2026-05-25, fourth batch)
+
+### BUG-09 · No NaN guard in training loop — backward called on non-finite loss
+**File:** `src/cidc/train.py` — main batch loop  
+**What was wrong:** The training loop had no `torch.isfinite(loss)` check. When NLL
+produced a NaN loss (likely on A1/B1 due to R²≈0.27 misspecification), `backward()`
+was called on the NaN tensor — silently propagating NaN gradients into all model
+weights and permanently corrupting the checkpoint. The run would continue for all
+remaining epochs producing meaningless output. The verdict script tried to count NaN
+steps via `kind="step"` rows but those only log every `log_every` steps, so most NaN
+events were invisible.  
+**Fix:** Check `torch.isfinite(loss)` **before** dividing by `grad_accum` and before
+`backward()`. On a NaN loss: log `kind="nan-step"` to JSONL (with running total),
+call `zero_grad()` to discard partial accumulation, then `continue` to the next
+batch. If the cumulative NaN count reaches `NAN_ABORT_LIMIT=5`, log `kind="nan-abort"`
+and `return` — the run exits cleanly without saving a corrupted checkpoint.  
+**New JSONL rows:**
+```json
+{"kind": "nan-step",  "epoch": 2, "step": 412, "loss_name": "poisson_gaussian_nll", "nan_count": 1, "loss": "nan"}
+{"kind": "nan-abort", "epoch": 2, "step": 601, "loss_name": "poisson_gaussian_nll", "nan_count": 5, "msg": "... try anscombe_mse or mae"}
+```
+**Verdict script updated:** `_parse_run` now reads `nan-step` rows (reliable, one
+per event). Score table shows `🔴ABORTED` for runs that hit `nan-abort`. Aborted
+runs are excluded from the winner comparison.
+
+---
+
 ## Fixed (committed 2026-05-25, third batch)
 
 ### BUG-07 · `anscombe_mse` in `_simple_loss` was identical to plain `mse` (SILENT BUG)
