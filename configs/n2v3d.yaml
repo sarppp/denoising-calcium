@@ -42,7 +42,7 @@ model:
 data:
   patch:       [64, 128, 128]            # [T, H, W] — T=64 > τ₀.₅=46 (nb01); T=32 was too short
   stride:      [16, 64, 64]              # patch stride over each stack
-  batch_size:  8             # 8 × grad_accum=2 → effective batch 16; fits T4 at [64,128,128]
+  batch_size:  16            # L40S: 16 | T4: 8 (with grad_accum=2)
   num_workers: 4
   samples_per_epoch: 2000   # 2000÷8=250 steps/epoch; 100 epochs ≈ ~8h on T4
   train_stacks: [A1, B1, C2, D2]         # train only on training stacks
@@ -63,10 +63,10 @@ training:
   weight_decay:  1.0e-4
   scheduler:     cosine_restarts
   restarts:      3
-  epochs:        100
+  epochs:        10     # ← 10 for model-size test; change to 100 for full training
   warmup_steps:  500
   grad_clip:     1.0
-  grad_accum:    2                       # effective_batch = 8 × 2 = 16; reduces peak VRAM vs batch=16
+  grad_accum:    1                       # L40S: 1 | T4: change to 2 and batch_size: 8
   grad_ckpt:     false                   # base model fits fine without it; true only for large (depth=4)
   ema_decay:     0.999
   amp:           true                    # mixed-precision (bf16 where possible)
@@ -80,7 +80,7 @@ training:
 
 # ─── loss ───────────────────────────────────────────────────────────────────
 loss:
-  name: poisson_gaussian_nll             # poisson_gaussian_nll | anscombe_mse | mse
+  name: huber                            # winner from ablation — poisson_gaussian_nll | anscombe_mse | mse | mae | huber
   var_floor: 1.0
   aux:                                   # dict of name -> { enabled, weight, extras }
     pinn:

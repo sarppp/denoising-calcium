@@ -134,90 +134,79 @@ Catastrophic instability. Anscombe amplifies errors when gain is misspecified (R
 **Epoch count: set `epochs: 100`, let early stopping decide.**
 - F3 OOD peaked at epoch 6 (+1.300) then declined as model overfits to training distribution
 - F1 still improving steeply at epoch 9 — not yet converged
-- Early stopping (`patience=5` on combined val stSNR = mean of F1+F2+F3) finds the balance automatically
+- Script said "50 likely sufficient" — setting 100 is just a safe ceiling; early stopping (`patience=5`) stops automatically when val stSNR plateaus (likely around epoch 30–50)
 - Do NOT pick the epoch manually
 
-### Step 2 — Model size test: N2V3D base vs large (10 epochs, ~20 min each on L40S)
+### Step 2 — Model size + model type test (10 epochs each, on L40S)
 
-**Shortcut:** The ablation already ran N2V3D base for 10 epochs.
-Use the winning ablation run as your base reference — no need to re-run it.
-Only run `n2v3d_large` fresh.
+**⚠️ Ablation used patch=[64,64,64] — must re-run base with same settings as large for fair comparison.**
 
-Before running, edit `n2v3d_large.yaml`:
+All 4 runs use identical settings so results are comparable:
 ```yaml
-loss:
-  name: <winner from Step 1>   # e.g. mae, anscombe_mse, huber ...
-# epochs: 10 is already set in the config
+# Apply to n2v3d.yaml, n2v3d_large.yaml, mamba3d.yaml, mamba3d_large.yaml
+data:
+  patch:      [64, 64, 64]    # fast comparison — patch size doesn't change the winner ranking
+  stride:     [16, 32, 32]
+  batch_size: 32              # L40S: fill VRAM with small patch
+
+training:
+  epochs:     10
+  grad_accum: 1
+  grad_ckpt:  false           # L40S has enough VRAM even for large models
 ```
 
-```bash
-uv run cidc train configs/n2v3d_large.yaml --data $DATA --out $RUNS/n2v3d_large
-```
-
-Then compare with verdict script:
-```bash
-uv run python scripts/ablation_verdict.py \
-    $RUNS/<winning_ablation_arm> $RUNS/n2v3d_large \
-    --stack F1
-```
-
-**Decision rule:**
-- Large wins F1 stSNR by **>1 dB** → use large for full training
-- Large ties or loses (within 1 dB) → stick with base (faster, less overfitting risk)
-
-| Config | Params | T4 batch | T4 time/10ep | L40S batch | L40S time/10ep |
-|--------|--------|----------|-------------|------------|----------------|
-| n2v3d.yaml | ~0.5M | 8, accum=2 | ~50 min | 16, accum=1 | ~10 min |
-| n2v3d_large.yaml | ~4M | 8, accum=2 | ~80 min | 16, accum=1 | ~15 min |
-
-### Step 3 — Mamba3D test (optional, only if N2V3D large wins or time allows)
-
-Mamba SSM bottleneck models long-range temporal dependencies in O(T) vs O(T²).
-Potentially better tSNR on long calcium transients (τ₀.₅=46 frames).
-Only worth trying if you have time — N2V3D is proven to work.
-
-**First check Mamba is installed:**
+Check Mamba is installed first:
 ```bash
 uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
 # If this fails: uv pip install -e '.[mamba]'   (needs nvcc in PATH)
 ```
 
-Before running, edit `loss.name` in both mamba configs to the ablation winner.
-Both already have `epochs: 10` set.
-
+Run all 4 sequentially (~15 min each on L40S, ~1h total):
 ```bash
-uv run cidc train configs/mamba3d.yaml       --data $DATA --out $RUNS/mamba3d_base
-uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba3d_large
+uv run cidc train configs/n2v3d.yaml         --data $DATA --out $RUNS/base
+uv run cidc train configs/n2v3d_large.yaml   --data $DATA --out $RUNS/large
+uv run cidc train configs/mamba3d.yaml       --data $DATA --out $RUNS/mamba_base
+uv run cidc train configs/mamba3d_large.yaml --data $DATA --out $RUNS/mamba_large
 ```
 
-Compare all 4 at once:
+Read the verdict on **both** F1 and F3:
 ```bash
 uv run python scripts/ablation_verdict.py \
-    $RUNS/<winning_ablation_arm> $RUNS/n2v3d_large \
-    $RUNS/mamba3d_base $RUNS/mamba3d_large \
-    --stack F1
+    $RUNS/base $RUNS/large $RUNS/mamba_base $RUNS/mamba_large --stack F1
+
+uv run python scripts/ablation_verdict.py \
+    $RUNS/base $RUNS/large $RUNS/mamba_base $RUNS/mamba_large --stack F3
 ```
 
-**Decision rule:** pick Mamba only if it beats the best N2V3D by >1 dB — it is slower per step.
+**Decision rules:**
+- Large wins base by **>1 dB** on F1 → use large; otherwise use base
+- Mamba wins best N2V3D by **>1 dB** → use Mamba; otherwise stick with N2V3D (proven, faster)
+- Check F3 too — OOD matters for the competition score
 
-| Config | Params | SSM layers | T4 batch | L40S batch |
-|--------|--------|------------|----------|------------|
-| mamba3d.yaml | ~1M | 2 | 8, accum=2 | 16, accum=1 |
-| mamba3d_large.yaml | ~4M | 4 | 4, accum=4 | 8, accum=1 |
+### Step 4 — Full training (L40S, inference on T4)
 
-### Step 4 — Full training (100 epochs, winning model + loss)
-
-Edit the winning config:
+Edit the winning config — change only these values:
 ```yaml
 loss:
-  name: <winner>        # from Step 1
+  name: huber           # ✅ decided from Step 1
+
+data:
+  patch:      [128, 128, 128]   # full temporal context (T=128 > 2×τ₀.₅=46)
+  stride:     [32, 64, 64]
+  batch_size: 16                # L40S with larger patch
+
 training:
-  epochs: 100           # was 10 for testing
-# If on L40S, also uncomment the L40S block at the bottom of the config
+  epochs:     100               # early stopping (patience=5) will stop around ep 30–50
+  grad_accum: 1
+  grad_ckpt:  false             # base model | true for large model
+
+inference:
+  tile:    [128, 128, 128]      # T4 inference: ~2GB per tile, well within 16GB
+  overlap: [32, 16, 16]
 ```
 
 ```bash
-# Replace n2v3d_large with whichever model won Steps 2-3
+# Replace with whichever config won Step 3
 uv run cidc train configs/n2v3d_large.yaml --data $DATA --out $RUNS/full_training
 ```
 
@@ -232,12 +221,13 @@ for line in sys.stdin:
 "
 ```
 
-Expected time:
-| GPU | N2V3D base | N2V3D large |
-|-----|-----------|-------------|
-| T4 | ~8 h | ~12 h |
-| L40S (patch=[64,128,128]) | ~2 h | ~3 h |
-| L40S (patch=[128,128,128]) | ~3 h | ~5 h |
+Expected time on L40S with patch=[128,128,128]:
+| Model | ~time |
+|-------|-------|
+| N2V3D base | ~3 h |
+| N2V3D large | ~5 h |
+| Mamba base | ~4 h |
+| Mamba large | ~6 h |
 
 ### Step 5 — Score the trained model on val stacks
 

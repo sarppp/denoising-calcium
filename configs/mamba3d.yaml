@@ -21,9 +21,9 @@ model:
 data:
   patch:       [64, 128, 128]
   stride:      [16, 64, 64]
-  batch_size:  8                         # T4: 8 | L40S: 16
+  batch_size:  16                        # L40S: 16 | T4: 8
   num_workers: 4
-  samples_per_epoch: 2000               # 2000÷8=250 steps/epoch; 100 epochs ≈ ~10h on T4
+  samples_per_epoch: 2000
   train_stacks: [A1, B1, C2, D2]
   ref_stack:   F0
   val_stacks:  [F1, F2, F3]
@@ -41,8 +41,8 @@ training:
   epochs: 10    # ← 10 for model-size test; change to 100 for full training
   warmup_steps: 1000                     # longer warmup helps Mamba converge
   grad_clip: 1.0
-  grad_accum: 2                          # T4: 2 (8×2=16 effective) | L40S: change to 1, batch_size: 16
-  grad_ckpt:  false                      # fine for base model; set true only if OOM
+  grad_accum: 1                          # L40S: 1 | T4: change to 2, batch_size: 8
+  grad_ckpt:  false
   ema_decay: 0.999
   amp: true
   seed: 0
@@ -51,8 +51,9 @@ training:
   early_stop: { metric: stsnr_val, patience: 5, higher_is_better: true }
 
 loss:
-  name: poisson_gaussian_nll
+  name: huber
   var_floor: 1.0
+  huber_delta: 1.0
   aux: {}
 
 inference:
