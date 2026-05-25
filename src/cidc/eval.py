@@ -378,7 +378,13 @@ def denoise_stack(
     """
     device = torch.device(device)
     model.to(device)
-    amp_dtype = torch.bfloat16 if amp else None
+    # Use fp16 on Turing/Volta (T4, V100); bf16 on Ampere+ (A100, RTX30xx+).
+    # Hardcoding bfloat16 on a T4 falls back to fp32 — zero AMP speedup.
+    if amp and device.type == "cuda":
+        major, _ = torch.cuda.get_device_capability(device)
+        amp_dtype = torch.bfloat16 if major >= 8 else torch.float16
+    else:
+        amp_dtype = None
 
     # Build TTA transform pairs.  With tta_rotations=1 and tta_flips=False
     # this is [(identity, identity)] — zero overhead vs the old code path.

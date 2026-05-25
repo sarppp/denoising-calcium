@@ -1,0 +1,86 @@
+# Mamba3D large model — Mamba state-space bottleneck + larger UNet backbone.
+#
+# Why Mamba?
+# ----------
+# The Mamba SSM bottleneck models long-range temporal dependencies more
+# efficiently than a standard UNet bottleneck: O(T) vs O(T²) for attention.
+# For calcium imaging where signal decays over 46 frames (τ₀.₅), a temporal
+# SSM is a natural fit — it maintains a hidden state across the full T axis
+# of each patch rather than averaging via convolution alone.
+#
+# Why large?
+# ----------
+# base_ch=32, depth=4 gives the same ~4M param backbone as n2v3d_large,
+# but the Mamba bottleneck replaces the bottleneck conv blocks.
+# n_layers=4 bidirectional Mamba blocks at the bottleneck.
+#
+# When to run
+# -----------
+# After loss ablation + n2v3d vs n2v3d_large comparison.
+# First verify Mamba is installed:
+#   uv run python -c "from src.cidc.models.mamba3d import MambaUNet3D; print('OK')"
+# If that fails, install mamba-ssm and retry.
+#
+# Compare: mamba3d_large vs n2v3d_large with same loss and patch.
+# Pick Mamba only if it wins by >1 dB — it is slower per step.
+
+name: mamba3d_large
+
+model:
+  name: mamba3d
+  kwargs:
+    in_ch:    1
+    base_ch:  32
+    depth:    4
+    kernel:   3
+    pool:     2
+    d_state:  16           # SSM hidden state dim per channel
+    d_conv:   4            # local causal conv width
+    expand:   2            # inner expansion factor
+    n_layers: 4            # bidirectional Mamba blocks at bottleneck
+    bidirectional: true
+
+data:
+  patch:       [64, 128, 128]
+  stride:      [16, 64, 64]
+  batch_size:  4             # Mamba bottleneck uses more memory; halved again
+  num_workers: 4
+  samples_per_epoch: 2000
+  train_stacks: [A1, B1, C2, D2]
+  ref_stack:   F0
+  val_stacks:  [F1, F2, F3]
+  gain_aug: { enabled: true, log_uniform_range: [20.0, 2000.0], prob: 0.5 }
+  flip: true
+  rot90: true
+  temporal_reverse: true
+
+training:
+  optimizer: adamw
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine_restarts
+  restarts: 3
+  epochs: 100
+  warmup_steps: 500
+  grad_clip: 1.0
+  grad_accum: 4            # effective batch = 4 × 4 = 16
+  grad_ckpt: true
+  ema_decay: 0.999
+  amp: true
+  seed: 0
+  log_every: 50
+  ckpt_every: 5
+  early_stop: { metric: stsnr_val, patience: 10, higher_is_better: true }
+
+loss:
+  name: poisson_gaussian_nll   # ← REPLACE with winning loss from ablation_verdict.py
+  var_floor: 1.0
+  huber_delta: 1.0
+  aux: {}
+
+inference:
+  tile: [64, 128, 128]
+  overlap: [16, 16, 16]
+  tta:
+    rotations: 4
+    flips: true

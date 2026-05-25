@@ -215,6 +215,25 @@ STEP_REGISTRY: dict[str, Callable[[nn.Module, dict[str, Any], Any], Tensor]] = {
 # aborted early.  Matching UNSTABLE_NAN_LIMIT in scripts/ablation_verdict.py.
 NAN_ABORT_LIMIT: int = 5
 
+
+def _amp_dtype(device: torch.device, enabled: bool) -> torch.dtype | None:
+    """Return the correct AMP dtype for the given device.
+
+    - Ampere+ (compute capability ≥ 8.0): bfloat16 — native hardware support,
+      numerically stable, no loss scaling needed.
+    - Turing / Volta (cc 7.x, e.g. T4, V100): float16 — the only dtype with
+      hardware tensor-core acceleration on these GPUs.  Requires GradScaler.
+    - CPU / AMP disabled: None.
+
+    Using bfloat16 on a T4 (cc 7.5) causes autocast to fall back to fp32 for
+    most ops → zero speedup.  This function prevents that mistake.
+    """
+    if not enabled or device.type != "cuda":
+        return None
+    major, _ = torch.cuda.get_device_capability(device)
+    return torch.bfloat16 if major >= 8 else torch.float16
+
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
@@ -277,7 +296,7 @@ def _probe(model: nn.Module, loader, step_fn, cfg, device: torch.device,
     """
     model.train()
     losses: list[float] = []
-    amp_dtype = torch.bfloat16 if cfg.training.amp and device.type == "cuda" else None
+    amp_dtype = _amp_dtype(device, cfg.training.amp)
     for i, batch in enumerate(loader):
         if i >= n_batches:
             break
@@ -409,7 +428,7 @@ def train(cfg, data_root: Path, out_dir: Path,
     opt_steps_per_epoch = max(1, len(train_loader) // cfg.training.grad_accum)
     sched = build_scheduler(opt, cfg, steps_per_epoch=opt_steps_per_epoch)
     scaler = torch.amp.GradScaler("cuda", enabled=cfg.training.amp and device.type == "cuda")
-    amp_dtype = torch.bfloat16 if cfg.training.amp else None
+    amp_dtype = _amp_dtype(device, cfg.training.amp)
     ema = EMA(model, decay=cfg.training.ema_decay)
 
     step_fn = STEP_REGISTRY[cfg.model.name]
