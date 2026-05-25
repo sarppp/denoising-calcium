@@ -42,9 +42,9 @@ model:
 data:
   patch:       [64, 128, 128]            # [T, H, W] — T=64 > τ₀.₅=46 (nb01); T=32 was too short
   stride:      [16, 64, 64]              # patch stride over each stack
-  batch_size:  16
+  batch_size:  8             # 8 × grad_accum=2 → effective batch 16; fits T4 at [64,128,128]
   num_workers: 4
-  samples_per_epoch: 2000                 # 2000÷16=125 steps/epoch; 100 epochs ≈ 10h on T4
+  samples_per_epoch: 2000   # 2000÷8=250 steps/epoch; 100 epochs ≈ ~8h on T4
   train_stacks: [A1, B1, C2, D2]         # train only on training stacks
   ref_stack:   F0                          # clean ground truth — scored against, never trained on
   val_stacks:  [F1, F2, F3]               # noisy stacks; F3=OOD Task-2 (gain≈991)
@@ -66,7 +66,7 @@ training:
   epochs:        100
   warmup_steps:  500
   grad_clip:     1.0
-  grad_accum:    1                       # effective_batch = batch_size * grad_accum
+  grad_accum:    2                       # effective_batch = 8 × 2 = 16; reduces peak VRAM vs batch=16
   grad_ckpt:     false                   # trade compute for memory on small GPUs
   ema_decay:     0.999
   amp:           true                    # mixed-precision (bf16 where possible)
