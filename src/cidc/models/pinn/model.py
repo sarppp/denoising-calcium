@@ -118,10 +118,25 @@ class PINNWrapper(nn.Module):
 
     # ----- forward --------------------------------------------------------- #
 
-    def forward(self, x_anscombe: Tensor, params: NoiseParams) -> PINNOutput:
+    def forward(
+        self,
+        x_anscombe: Tensor,
+        params: NoiseParams,
+        gain_tensor: Tensor | None = None,
+    ) -> PINNOutput:
         """Run backbone + PINN head.
 
-        Returns a dict with::
+        Parameters
+        ----------
+        x_anscombe
+            ``(B, 1, T, H, W)`` Anscombe-space input (blind-spot masked).
+        params
+            Batch-median noise params (scalar fallback).
+        gain_tensor
+            Optional ``(B, 1, 1, 1, 1)`` per-sample gain.  Forwarded to the
+            backbone so each sample's Anscombe inverse uses its correct gain.
+
+        Returns a PINNOutput with::
 
             denoised       : (B, 1, T, H, W)  — raw ADU prediction from the backbone
             tau            : (B, 1, 1, H, W)  — per-pixel decay constant
@@ -133,7 +148,7 @@ class PINNWrapper(nn.Module):
         :func:`cidc.losses.calcium_kinetics_loss`.
         """
         self._features = None
-        denoised = self.backbone(x_anscombe, params)        # (B, 1, T, H, W)
+        denoised = self.backbone(x_anscombe, params, gain_tensor=gain_tensor)  # (B, 1, T, H, W)
 
         if self._features is None:
             raise RuntimeError("backbone forward did not trigger the feature-tap hook")

@@ -50,29 +50,30 @@ from .noise import NoiseParams
 # --------------------------------------------------------------------------- #
 
 
-def _make_params(batch: dict[str, Any], index: int = 0) -> NoiseParams:
-    """Build a NoiseParams from the (augmented) gain/read_var in the batch.
+def _make_params(batch: dict[str, Any]) -> tuple[NoiseParams, torch.Tensor]:
+    """Return (scalar NoiseParams, per-sample gain tensor of shape (B,)).
 
-    KNOWN LIMITATION: we use index 0's gain as the batch-level scalar because
-    the model forward (UNet3D, DeepCAD, Mamba, PINN) applies a single
-    Anscombe inverse using one NoiseParams.  With per-sample gain augmentation
-    this introduces a systematic bias for samples 1..B-1.
+    The scalar NoiseParams holds the batch-median gain and is used only for
+    _simple_loss (which takes gain: float) and as a fallback for eval.
 
-    Mitigation: the dataset applies gain augmentation with prob=0.5 (see
-    DataConfig.gain_aug.prob), so ~50 % of samples share the un-augmented
-    gain that is closest to the batch median.  Full fix requires refactoring
-    the model forward to accept a (B,) gain tensor.
+    The per-sample tensor is the authoritative gain: each sample carries its
+    own value (possibly augmented). It is passed to model.forward() as
+    gain_tensor and used to compute tgt_raw, so every sample's Anscombe
+    inverse uses its correct gain instead of a shared median.
+
+    This fixes LIMITATION-01: previously all samples in a batch shared a
+    single gain scalar, so augmented samples (g_aug >> g_true) had their
+    Anscombe inverse applied with the wrong gain, scaling their loss
+    contribution by k = g_true/g_aug (up to 70× too small for high-gain
+    augmentation). The gain augmentation was therefore almost muted for the
+    OOD samples it was designed to help (F3, gain≈991).
     """
-    gains = batch["gain"]
-    if isinstance(gains, torch.Tensor) and gains.numel() > 1:
-        # Use batch-median gain to minimise worst-case Anscombe-inverse error.
-        gain_val = float(gains.median().item())
-    else:
-        gain_val = float(gains[index].item() if hasattr(gains, "__getitem__") else gains)
-    return NoiseParams(
-        gain=gain_val,
-        read_var=float(batch["read_var"][index].item()),
-    )
+    gains: torch.Tensor = batch["gain"]
+    if not isinstance(gains, torch.Tensor):
+        gains = torch.tensor([float(gains)])
+    gain_scalar = float(gains.median().item())
+    read_var = float(batch["read_var"][0].item())
+    return NoiseParams(gain=gain_scalar, read_var=read_var), gains
 
 
 def _simple_loss(name: str, pred: Tensor, tgt: Tensor,
@@ -122,15 +123,26 @@ def _simple_loss(name: str, pred: Tensor, tgt: Tensor,
     return poisson_gaussian_nll(pred, tgt, gain, read_var, var_floor=var_floor)
 
 
+def _gains_5d(gains: torch.Tensor, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Reshape a (B,) gain tensor to (B,1,1,1,1) for broadcasting over 5-D volumes."""
+    return gains.to(device=device, dtype=dtype).view(-1, 1, 1, 1, 1)
+
+
+def _gains_4d(gains: torch.Tensor, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    """Reshape a (B,) gain tensor to (B,1,1,1) for broadcasting over 4-D (H,W) tensors."""
+    return gains.to(device=device, dtype=dtype).view(-1, 1, 1, 1)
+
+
 def step_deepinterp(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     """Predict masked center frame from ±K Anscombe-context frames."""
     ctx = batch["input"].to(model_device(model))                # (B, 2K, H, W)
     tgt_anscombe = batch["target"].to(model_device(model))      # (B, 1, H, W)
-    params = _make_params(batch, 0)
-    pred_adu = model(ctx, params)                               # (B, 1, H, W)
-    # Target is Anscombe-space; invert to raw ADU so both pred and target
-    # share the same space regardless of which loss is selected.
-    tgt_raw = (tgt_anscombe / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
+    params, gains = _make_params(batch)
+    g = _gains_4d(gains, ctx.device, ctx.dtype)                 # (B,1,1,1)
+    sr2 = max(params.read_var, 0.0)
+    pred_adu = model(ctx, params, gain_tensor=g)                # (B, 1, H, W) — per-sample inverse
+    # Invert Anscombe with per-sample gain so each sample's target is in its own ADU space.
+    tgt_raw = (tgt_anscombe / 2.0).pow(2) * g - 0.375 * g - sr2 / g
     return _simple_loss(cfg.loss.name, pred_adu, tgt_raw,
                         params.gain, params.read_var, cfg.loss.var_floor,
                         huber_delta=cfg.loss.huber_delta)
@@ -139,11 +151,13 @@ def step_deepinterp(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
 def step_n2v3d(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     """Blind-spot masking in Anscombe space; primary loss on masked positions."""
     vol = batch["input"].to(model_device(model))                # (B, 1, T, H, W)
-    params = _make_params(batch, 0)
+    params, gains = _make_params(batch)
+    g = _gains_5d(gains, vol.device, vol.dtype)                 # (B,1,1,1,1)
+    sr2 = max(params.read_var, 0.0)
     masked, mask = stratified_blindspot(vol, mask_fraction=0.005)
-    pred_adu = model(masked, params)                            # (B, 1, T, H, W) raw ADU
-    # Undo Anscombe on the original volume to get raw-ADU targets.
-    tgt_raw = (vol / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
+    pred_adu = model(masked, params, gain_tensor=g)             # (B,1,T,H,W) — per-sample inverse
+    # Undo Anscombe on the original volume with per-sample gain → correct raw-ADU targets.
+    tgt_raw = (vol / 2.0).pow(2) * g - 0.375 * g - sr2 / g
     # Select masked positions only — N2V self-supervised objective.
     pred_m = pred_adu[mask]
     tgt_m = tgt_raw[mask]
@@ -161,9 +175,11 @@ def step_deepcad(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     """Temporal Noise2Noise: odd halves as input, even halves as target."""
     odd = batch["input"].to(model_device(model))                # (B, 1, T, H, W) Anscombe
     even = batch["target"].to(model_device(model))              # (B, 1, T, H, W) Anscombe
-    params = _make_params(batch, 0)
-    pred_adu = model(odd, params)                               # raw ADU
-    tgt_raw = (even / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
+    params, gains = _make_params(batch)
+    g = _gains_5d(gains, odd.device, odd.dtype)                 # (B,1,1,1,1)
+    sr2 = max(params.read_var, 0.0)
+    pred_adu = model(odd, params, gain_tensor=g)                # raw ADU — per-sample inverse
+    tgt_raw = (even / 2.0).pow(2) * g - 0.375 * g - sr2 / g
     return _simple_loss(cfg.loss.name, pred_adu, tgt_raw,
                         params.gain, params.read_var, cfg.loss.var_floor,
                         huber_delta=cfg.loss.huber_delta)
@@ -172,12 +188,14 @@ def step_deepcad(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
 def step_pinn(model: nn.Module, batch: dict[str, Any], cfg) -> Tensor:
     """N2V-style primary loss + calcium-kinetics aux loss on the output trace."""
     vol = batch["input"].to(model_device(model))
-    params = _make_params(batch, 0)
+    params, gains = _make_params(batch)
+    g = _gains_5d(gains, vol.device, vol.dtype)                 # (B,1,1,1,1)
+    sr2 = max(params.read_var, 0.0)
     masked, mask = stratified_blindspot(vol, mask_fraction=0.005)
-    out = model(masked, params)                                 # PINNOutput
+    out = model(masked, params, gain_tensor=g)                  # PINNOutput
 
     # Primary loss (N2V on denoised output, raw ADU).
-    tgt_raw = (vol / 2.0).pow(2) * params.gain - 0.375 * params.gain - params.read_var / params.gain
+    tgt_raw = (vol / 2.0).pow(2) * g - 0.375 * g - sr2 / g
     pred_m = out.denoised[mask]
     tgt_m = tgt_raw[mask]
     primary = _simple_loss(cfg.loss.name, pred_m, tgt_m,

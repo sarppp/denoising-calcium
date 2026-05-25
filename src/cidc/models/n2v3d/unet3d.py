@@ -84,7 +84,12 @@ class UNet3D(nn.Module):
 
         self.head = nn.Conv3d(chs[0], 1, kernel_size=1)
 
-    def forward(self, x_anscombe: Tensor, params: NoiseParams) -> Tensor:
+    def forward(
+        self,
+        x_anscombe: Tensor,
+        params: NoiseParams,
+        gain_tensor: Tensor | None = None,
+    ) -> Tensor:
         """Predict clean signal in raw ADU from an Anscombe-space volume.
 
         Parameters
@@ -93,7 +98,14 @@ class UNet3D(nn.Module):
             ``(B, 1, T, H, W)`` tensor.  Typically already blind-spot
             masked (see ``mask.stratified_blindspot``).
         params
-            NoiseParams to invert the Anscombe VST.
+            NoiseParams carrying the batch-median gain and read_var.
+            Used as fallback when ``gain_tensor`` is None (e.g. inference).
+        gain_tensor
+            Optional ``(B, 1, 1, 1, 1)`` per-sample gain tensor.  When
+            provided, each sample's Anscombe inverse uses its own gain
+            instead of the shared scalar in ``params``.  Pass this during
+            training with gain augmentation to avoid the loss-scale collapse
+            described in LIMITATION-01 / KNOWN_ISSUES.md.
 
         Returns
         -------
@@ -118,6 +130,9 @@ class UNet3D(nn.Module):
             h = dec(h)
 
         z_pred = self.head(h)
-        g = torch.as_tensor(params.gain, dtype=z_pred.dtype, device=z_pred.device)
+        if gain_tensor is not None:
+            g = gain_tensor.to(dtype=z_pred.dtype, device=z_pred.device)
+        else:
+            g = torch.as_tensor(params.gain, dtype=z_pred.dtype, device=z_pred.device)
         sr2 = torch.as_tensor(max(params.read_var, 0.0), dtype=z_pred.dtype, device=z_pred.device)
         return (z_pred / 2.0).pow(2) * g - 0.375 * g - sr2 / g

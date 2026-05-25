@@ -33,6 +33,11 @@ class DeepCADNet(UNet3D):
     ) -> None:
         super().__init__(in_ch=in_ch, base_ch=base_ch, depth=depth, kernel=kernel, pool=pool)
 
-    def forward(self, x_anscombe: Tensor, params: NoiseParams) -> Tensor:  # noqa: D401
-        """Same as ``UNet3D.forward``; see that for details."""
-        return super().forward(x_anscombe, params)
+    def forward(  # noqa: D401
+        self,
+        x_anscombe: Tensor,
+        params: NoiseParams,
+        gain_tensor: Tensor | None = None,
+    ) -> Tensor:
+        """Same as ``UNet3D.forward``; passes ``gain_tensor`` through."""
+        return super().forward(x_anscombe, params, gain_tensor=gain_tensor)

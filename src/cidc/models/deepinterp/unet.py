@@ -107,7 +107,12 @@ class TemporalUNet(nn.Module):
         self.head = nn.Conv2d(chs[0], 1, kernel_size=1)
 
     # ------------------------------------------------------------------ #
-    def forward(self, x_anscombe: Tensor, params: NoiseParams) -> Tensor:
+    def forward(
+        self,
+        x_anscombe: Tensor,
+        params: NoiseParams,
+        gain_tensor: Tensor | None = None,
+    ) -> Tensor:
         """Predict the clean center frame in raw ADU.
 
         Parameters
@@ -115,15 +120,15 @@ class TemporalUNet(nn.Module):
         x_anscombe
             ``(B, 2K, H, W)`` tensor of Anscombe-transformed context frames.
         params
-            Noise parameters of *this* batch (for inverting the Anscombe
-            transform at the output head). With continuous-gain augmentation
-            these come from the sampled gain, not the raw-file gain.
+            Noise parameters of *this* batch (batch-median gain, read_var).
+            Used as fallback when ``gain_tensor`` is None.
+        gain_tensor
+            Optional ``(B, 1, 1, 1)`` per-sample gain tensor.  When
+            provided, each sample's Anscombe inverse uses its own gain.
 
         Returns
         -------
-        ``(B, 1, H, W)`` predicted clean mean in raw ADU. Apply
-        ``cidc.losses.poisson_gaussian_nll`` against the observed noisy
-        center frame.
+        ``(B, 1, H, W)`` predicted clean mean in raw ADU.
         """
         skips: list[Tensor] = []
         h = x_anscombe
@@ -144,7 +149,7 @@ class TemporalUNet(nn.Module):
             h = dec(h)
 
         z_pred = self.head(h)  # Anscombe-space prediction
-        return _inverse_anscombe_torch(z_pred, params)
+        return _inverse_anscombe_torch(z_pred, params, gain_tensor=gain_tensor)
 
 
 # ---------------------------------------------------------------------- #
@@ -152,14 +157,30 @@ class TemporalUNet(nn.Module):
 # ---------------------------------------------------------------------- #
 
 
-def _inverse_anscombe_torch(z: Tensor, params: NoiseParams) -> Tensor:
+def _inverse_anscombe_torch(
+    z: Tensor,
+    params: NoiseParams,
+    gain_tensor: Tensor | None = None,
+) -> Tensor:
     """Asymptotic inverse Anscombe: y = (z/2)^2 * g - 3g/8 - sigma_r^2 / g.
 
     Matches ``cidc.noise.inverse_anscombe(method="asymptotic")`` but stays
-    on device and differentiable. The network is trained with the
-    Poisson-Gaussian NLL in raw ADU, so any residual bias of the
-    asymptotic (vs Mäkitalo-Foi exact) inverse is absorbed by the head.
+    on device and differentiable.
+
+    Parameters
+    ----------
+    z
+        Anscombe-space prediction from the network head.
+    params
+        Scalar fallback noise params (used when ``gain_tensor`` is None).
+    gain_tensor
+        Optional per-sample gain, shape broadcastable with ``z``.  When
+        provided (training path with gain augmentation), each sample gets
+        the correct Anscombe inverse instead of a shared batch-median.
     """
-    g = torch.as_tensor(params.gain, dtype=z.dtype, device=z.device)
+    if gain_tensor is not None:
+        g = gain_tensor.to(dtype=z.dtype, device=z.device)
+    else:
+        g = torch.as_tensor(params.gain, dtype=z.dtype, device=z.device)
     sr2 = torch.as_tensor(max(params.read_var, 0.0), dtype=z.dtype, device=z.device)
     return (z / 2.0).pow(2) * g - 0.375 * g - sr2 / g

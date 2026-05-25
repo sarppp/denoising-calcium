@@ -6,6 +6,23 @@ Any agent or human continuing this work should read this first.
 
 ---
 
+## Fixed (committed 2026-05-25, fifth batch)
+
+### LIMITATION-01 → BUG-11 · Per-sample gain tensor — LIMITATION-01 fully resolved
+**Files:** `src/cidc/train.py`, `models/n2v3d/unet3d.py`, `models/mamba3d/unet3d.py`,
+`models/deepcad/unet3d.py`, `models/deepinterp/unet.py`, `models/pinn/model.py`  
+**What was wrong:** All model `forward()` calls took a single scalar `NoiseParams` for
+the whole batch. Augmented samples (up to 50% of batch) had their Anscombe inverse applied
+with the wrong gain, scaling their loss by `k = g_true/g_aug` — as small as 1/71 for
+high-gain augmentation. The gain augmentation was effectively muted for the OOD samples
+it was designed to help.  
+**Fix:** `_make_params()` now returns `(NoiseParams, gains_tensor)`. All `step_*`
+functions pass a `(B,1,1,1,1)` per-sample gain tensor to `model.forward()` and use it
+for `tgt_raw`. All 5 model `forward()` signatures accept `gain_tensor: Tensor | None = None`
+— `None` in the inference path (single tile, no augmentation) falls back to the scalar.
+
+---
+
 ## Fixed (committed 2026-05-25, fourth batch)
 
 ### BUG-09 · No NaN guard in training loop — backward called on non-finite loss
@@ -136,7 +153,7 @@ training bug, but `training/` is retired. Use `src/cidc/` exclusively.
 
 ## Architectural Limitations (known, not going to fix now)
 
-### LIMITATION-01 · Batch gain: one NoiseParams for the whole batch
+### ~~LIMITATION-01~~ · ✅ FIXED — Per-sample gain tensor in all model forwards
 **File:** `src/cidc/train.py:_make_params` + all `step_*` functions  
 **What it is:** All 5 model forward passes call `model(x, params)` where `params`
 is one `NoiseParams` shared across the whole batch. When gain augmentation is on

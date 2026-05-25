@@ -8,7 +8,7 @@ bottleneck volume.
 
 Input / output contract matches every other CIDC25 model:
 
-    forward(x_anscombe: (B, 1, T, H, W), params: NoiseParams) -> (B, 1, T, H, W)  # raw ADU
+    forward(x_anscombe: (B, 1, T, H, W), params: NoiseParams, gain_tensor=None) -> (B, 1, T, H, W)  # raw ADU
 """
 
 from __future__ import annotations
@@ -79,7 +79,15 @@ class MambaUNet3D(nn.Module):
 
         self.head = nn.Conv3d(chs[0], 1, kernel_size=1)
 
-    def forward(self, x_anscombe: Tensor, params: NoiseParams) -> Tensor:
+    def forward(
+        self,
+        x_anscombe: Tensor,
+        params: NoiseParams,
+        gain_tensor: Tensor | None = None,
+    ) -> Tensor:
+        """See ``UNet3D.forward`` for parameter docs.  ``gain_tensor`` is
+        ``(B, 1, 1, 1, 1)`` per-sample gain; falls back to ``params.gain``
+        scalar when None (inference path)."""
         skips: list[Tensor] = []
         h = x_anscombe
         for enc, down in zip(self.enc_blocks, self.downs):
@@ -102,7 +110,10 @@ class MambaUNet3D(nn.Module):
             h = dec(h)
 
         z_pred = self.head(h)
-        g = torch.as_tensor(params.gain, dtype=z_pred.dtype, device=z_pred.device)
+        if gain_tensor is not None:
+            g = gain_tensor.to(dtype=z_pred.dtype, device=z_pred.device)
+        else:
+            g = torch.as_tensor(params.gain, dtype=z_pred.dtype, device=z_pred.device)
         sr2 = torch.as_tensor(max(params.read_var, 0.0), dtype=z_pred.dtype, device=z_pred.device)
         # Asymptotic inverse Anscombe in raw ADU (differentiable).
         return (z_pred / 2.0).pow(2) * g - 0.375 * g - sr2 / g
