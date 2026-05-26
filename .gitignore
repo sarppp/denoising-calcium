@@ -1,3 +1,6 @@
+# Secrets
+modal/.env
+
 # Data — download via scripts/download_data.py (Zenodo, MD5-verified)
 # Leading slash anchors to repo root so src/cidc/data/ is NOT ignored.
 /data/
