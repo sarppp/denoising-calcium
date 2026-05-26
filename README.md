@@ -2,20 +2,20 @@
 
 <p align="center">
   <strong>Noise2Void in 3D on calcium imaging breaks if you use 2D masks, the wrong loss, or forget that temporal fidelity is half the metric.</strong><br><br>
-  <strong>This pipeline is measurement-first: 10 notebooks quantify every decision before any model runs. Every shortcut costs 5–14 dB on the leaderboard.</strong>
+  <strong>This pipeline is measurement-first: 10 notebooks quantify every design decision before any model runs. Every shortcut costs 5–14 dB — but correct design is necessary, not sufficient. Task 2 fell 16 dB short of #1 for reasons that stacked: a silent gradient bug (LIMITATION-01, fixed), GroupNorm affine parameters that erased gain-invariance as training progressed, a mean-stSNR early stopping criterion that saved the wrong checkpoint, and augmentation that covered the F3 gain regime with only 6.5% of training samples.</strong>
 
   ![F0 vs F1 vs F2 vs F3 at frame 100](assets/08_stack_comparison_plot_001.png)
 </p>
 
 ---
 
-**Zero clean training pairs.** Not because it's easy — because every standard approach broke:
+**Self-supervised denoising on calcium imaging presents several non-obvious failure modes.** Each bullet below represents a decision that required empirical validation before training:
 
-- **The evaluation metric is stSNR = 0.5 × sSNR + 0.5 × tSNR, not PSNR.** A model that spatially over-smooths can look good by eye while *destroying* temporal transients. We measured this: spatial blur creates a **+6.8 dB gap** where tSNR stays high but sSNR collapses. Temporal smoothing does the opposite. You must win on both axes simultaneously.
-- **2-D-only denoisers fail on this dataset.** Temporal structure dominates — a pure 2-D spatial denoiser sits above the stSNR diagonal; a temporal-only smoother sits below it. **N2V3D blind-spot masking is the only paradigm that can improve along both axes.**
-- **Naive variance-based noise fitting gives R² = 0.23–0.30 on low-gain stacks.** Signal contaminates the variance estimate when gain is small (~35 ADU). Without clean noise parameters, the Poisson-Gaussian NLL is fed wrong values and the model learns nonsense.
-- **Gain mismatch costs 14+ dB.** Training at one gain level and testing at a 3× different gain without augmentation is catastrophic. Log-uniform gain augmentation over **[20, 2000]** makes OOD noise levels generalisable.
-- **Patch depth T is not a hyperparameter to tune.** The temporal autocorrelation of clean F0 gives τ₀.₅ = 46 frames. T = 64 (ablation) to T = 128 (full training) is the physically justified range.
+- **The evaluation metric is stSNR = 0.5 × sSNR + 0.5 × tSNR, not PSNR.** A model that spatially over-smooths can appear visually clean while destroying temporal transients. Spatial blur creates a **+6.8 dB gap** between sSNR and tSNR; temporal smoothing inverts it. Both axes must be optimized simultaneously.
+- **2-D-only denoisers are insufficient for this dataset.** Temporal structure is the dominant signal; a pure spatial denoiser improves tSNR at the expense of sSNR, while a temporal-only smoother does the reverse. **N2V3D blind-spot masking in 3-D is the only paradigm that can improve along both axes.**
+- **Naive variance-based noise fitting gives R² = 0.23–0.30 on low-gain stacks.** At low gain (~35 ADU), signal variance is comparable to noise variance, contaminating the fit. Without accurate noise parameters the Poisson-Gaussian NLL (Negative Log-Likelihood) operates under a misspecified model and produces unreliable gradients.
+- **Gain mismatch costs 14+ dB.** Training at one gain level and evaluating at 3× higher gain without augmentation leads to catastrophic performance degradation. Log-uniform gain augmentation over **[20, 2000]** is required for out-of-distribution generalisation — but four compounding failures prevented it from working fully. (1) LIMITATION-01 (fixed): a shared scalar gain in the Anscombe inverse scaled augmented-sample gradients by k = g_true/g_aug ≈ 1/35, making high-gain samples nearly invisible to the optimizer. (2) Architecture leakage: `GroupNorm(affine=True)` layers learn a gain-specific γ/β rescaling that overwrites the gain-invariance the Anscombe transform provides — the model forgets F3 as γ and β drift toward the low-gain optimum over 42 epochs. (3) Coverage: with `prob=0.5` and log-uniform sampling over a 100× range, only ~6.5% of training samples land in the g ∈ [700, 1300] regime that F3 occupies. (4) Early stopping on mean stSNR: the best checkpoint for F3 is epoch 7 (+8.40 dB) while the saved `best.pt` is epoch ~32, chosen because F1/F2 dominate the unweighted mean.
+- **Patch depth T is determined by the signal's temporal autocorrelation, not by convention.** The temporal ACF of clean F0 gives τ₀.₅ = 46 frames. T = 64 (ablation) to T = 128 (full training) is the physically justified range.
 
 **Codebase:** `src/cidc/` — five model architectures, one shared training loop, YAML-driven config.  
 `training/` is an old prototype retained for reference only. **Do not use it.**
@@ -30,7 +30,7 @@ The challenge scorer computes:
 - **tSNR** — temporal fidelity per pixel trace (frame-wise MSE in dB)
 - **stSNR** = 0.5 × sSNR + 0.5 × tSNR
 
-We ran controlled degradations on clean F0 to understand the metric geometry *before* building any model:
+I ran controlled degradations on clean F0 to understand the metric geometry *before* building any model:
 
 | Degradation | sSNR | tSNR | Gap (tSNR − sSNR) |
 |-------------|------|------|-------------------|
@@ -39,9 +39,9 @@ We ran controlled degradations on clean F0 to understand the metric geometry *be
 | Spatial blur (σ=6) | 13.2 | 19.9 | **+6.7** |
 | Additive noise (σ=80) | 10.6 | 9.8 | **−0.7** |
 
-**Key insight:** spatial blur and additive noise move your (sSNR, tSNR) point in *different directions*. A spatial-only denoiser sits above the diagonal — good tSNR, bad sSNR. A temporal-only smoother sits below — good sSNR, destroyed tSNR. **You need a 3-D method that respects both axes.**
+**Key insight:** spatial blur and additive noise move your (sSNR, tSNR) point in *different directions*. A spatial-only denoiser sits above the diagonal — good tSNR, bad sSNR. A temporal-only smoother sits below — good sSNR, low tSNR. **You need a 3-D method that respects both axes.**
 
-We confirmed this on real noisy data with temporal smoothing on F1:
+I confirmed this on real noisy data with temporal smoothing on F1:
 
 | Window | sSNR | tSNR | stSNR |
 |--------|------|------|-------|
@@ -61,16 +61,16 @@ Every architecture decision is locked by a measurement, not a guess. The noteboo
 
 | Notebook | What it measures | Decision it locks |
 |----------|------------------|-------------------|
-| **01** tSNR baseline | ACF[1]=0.995, τ₀.₅=46 frames | **Patch depth T ≥ 64** (ablation) / **T = 128** (full) |
-| **02** Metric behavior | Blur vs noise geometry | **Must use 3-D voxel-level, not 2-D** |
-| **03** Noise model | `Var = g × mean + σ²` per training stack | Fitted gains locked; R²≈0.27 on A1/B1 is a known limitation |
-| **04** Loss comparison | MSE vs MAE on raw noisy inputs (no model) | Provides baseline noise floor only — see ablation for real loss choice |
-| **05** Gain augmentation | 1.5× gain mismatch → −5.66 dB; 3× → −14.94 dB | **LogUniform g ∈ [20, 2000] per patch** |
-| **06** Masking geometry | Mask size vs receptive field | **N2V3D blind-spot at 0.5% of voxels** |
+| **01** tSNR baseline | Temporal ACF: τ₀.₅=46 frames | **Patch depth T ≥ 64** (ablation) / **T = 128** (full) |
+| **02** Metric behavior | Blur vs noise geometry in (sSNR, tSNR) space | **Must use 3-D voxel-level, not 2-D** |
+| **03** Noise model | Noise model fit: `Var = g × mean + σ²` per training stack | Fitted gains locked; R²≈0.27 on A1/B1 is a known limitation |
+| **04** Loss comparison | Loss baseline on raw noisy inputs (no model) | Provides baseline noise floor only — see ablation for real loss choice |
+| **05** Gain augmentation | Gain mismatch penalty: 1.5× → −5.66 dB; 3× → −14.94 dB | **LogUniform g ∈ [20, 2000] per patch** |
+| **06** Masking geometry | Mask size vs receptive field trade-off | **N2V3D blind-spot at 0.5% of voxels** |
 | **07** Architecture validation | Baseline stSNR from raw noisy stacks | Floor: F1=+7.27 / F2=−0.79 / F3=−6.64 dB |
-| **08** Stack comparison | Gain varies 4× across val stacks | **Per-patch gain augmentation, not per-model** |
-| **09** Patch sampling | 100% of random patches contain active neurons | **Random sampling is sufficient** |
-| **10** Noise calibration | R² ≈ 0.001–0.24 on val stacks F0–F3 | **NLL is risky; anscombe_mse / MAE / Huber are safer** |
+| **08** Stack comparison | Gain variation: 4× range across val stacks | **Per-patch gain augmentation, not per-model** |
+| **09** Patch sampling | Patch activity rate in random samples | **Random sampling is sufficient** |
+| **10** Noise calibration | Noise model fit on val stacks: R² = 0.001–0.24 | **NLL is risky; anscombe_mse / MAE / Huber are safer** |
 
 ---
 
@@ -125,7 +125,7 @@ Poisson-Gaussian noise: `Var[y] = g × E[y] + σ_r²`.
 
 ![Model robustness to gain variation](assets/05_gain_augmentation_plot_001.png)
 
-We rescaled a clean patch to different effective gains and measured stSNR degradation:
+I rescaled a clean patch to different effective gains and measured stSNR degradation:
 
 | Gain factor | stSNR | Drop from nominal |
 |-------------|-------|-------------------|
@@ -198,7 +198,7 @@ All five models in `src/cidc/` satisfy these constraints and share the same trai
 
 ## Loss Function — Five-Arm Ablation
 
-The loss is not obvious given nb10's findings. We run a 5-arm ablation to find the best empirically:
+The loss is not obvious given nb10's findings. I ran a 5-arm ablation to find the best empirically:
 
 | Loss | Assumption | Risk on A1/B1 (R²≈0.27) |
 |------|-----------|--------------------------|
@@ -320,7 +320,7 @@ All stSNR values are **absolute** (denoised output vs F0 reference). Models not 
 | mamba_base | ~1M | −3.385 dB | −6.162 dB | −4.77 dB | — |
 | n2v3d_base | ~0.5M | −3.398 dB | −6.355 dB | −4.88 dB | — |
 
-**Combined avg = (F1 + F3) / 2**, matching how the competition scores across Task 1 and Task 2.  
+**Combined avg = (F1 + F3) / 2** — F2 is excluded here because this was an architecture-selection run; the goal is to identify which model handles both in-distribution (F1) and OOD (F3) best. The actual competition Task 1 score is (F1+F2)/2; see the full training results table for the competition-aligned breakdown.  
 Raw noisy baselines: F1 = +7.27 dB, F3 = −6.64 dB.
 
 ### Why this result is architecturally determined, not data-specific
@@ -362,6 +362,45 @@ See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for a full audit. Summary of the most i
 
 ---
 
+## Full Training Results — n2v3d_large
+
+**Run:** H200 141 GB, batch=16, patch=128³, 100 epochs (early stopped at epoch 42), 1h55m
+
+| Epoch | F1 stSNR | F2 stSNR | F3 stSNR | Mean | Task1 (F1+F2)/2 | Task2 (F3) |
+|-------|----------|----------|----------|------|-----------------|------------|
+| Raw noisy | +7.27 | −0.79 | −6.64 | — | +3.24 | −6.64 |
+| 0 | −3.26 | −0.86 | −1.69 | −1.94 | −2.06 | −1.69 |
+| 10 | −1.51 | +6.58 | +3.48 | +2.85 | +2.54 | +3.48 |
+| 18 | +9.21 | +12.30 | +1.03 | +7.51 | +10.76 | +1.03 |
+| 23 | +18.86 | +12.06 | +0.85 | +10.59 | +15.46 | +0.85 |
+| 34 | +20.66 | +11.78 | +0.80 | +11.08 | +16.22 | +0.80 |
+| 40 | +20.15 | +12.80 | +0.53 | +11.16 | +16.47 | +0.53 |
+| **42 (final)** | **+22.11** | **+12.76** | +0.57 | — | **+17.43** | **+0.57** |
+| **#1 leaderboard** | — | — | — | — | **22.14** | **16.75** |
+
+Task 1 is competitive — F1 alone reached +22.11 dB, within 0.03 dB of #1. Task 2 fell short: F3 peaked at epoch 7 (+8.40 dB) then declined monotonically as training specialised on in-distribution data. Earlier checkpoints (`epoch_0005.pt`, `epoch_0010.pt`) score better on F3 than `best.pt`.
+
+The Anscombe chain is theoretically gain-blind: `raw → Anscombe(x, g) → unit-variance → network → inverse Anscombe → raw`. In this pipeline the chain is applied correctly — F3 inference uses the measured gain of 990.5 ADU, per-sample gain tensors pass through all five model forwards (LIMITATION-01 fixed), and the training augmentation covers [20, 2000]. The failure is that the chain is broken at the normalisation layers.
+
+**Why F3 peaked at epoch 7 then fell:** `GroupNorm(affine=True)` initialises γ=1, β=0 — effectively identity, so the network is gain-invariant at epoch 0. As training proceeds, γ and β accumulate gradient updates. Because real-data samples (gain 28–249, 50% of the batch) point consistently toward the same low-gain optimum while augmented-sample gradients are scattered across log-uniform [20, 2000], the consistent direction wins over 10,500 optimizer steps. By epoch 42 the affine parameters have drifted enough to project F3's correctly-transformed features into the wrong subspace — the Anscombe gain-invariance is cancelled by its own affine rescaling. The head and ConvTranspose3d bias terms do the same at the output layer, adding a constant offset tuned to low-gain ADU values. This is confirmed by the leaderboard #1 on Task 2 (16.75 dB vs 0.57 dB) whose only known architectural differences are `bias=False` and `GroupNorm(affine=False)`.
+
+**Four compounding causes, not one:**
+
+| Cause | Mechanism | Effect |
+|---|---|---|
+| `GroupNorm(affine=True)` + output biases | γ/β drift toward low-gain optimum over 42 epochs | F3 falls from +8.40 → +0.57 dB post epoch 7 |
+| Mean-stSNR early stopping | `best.pt` maximises (F1+F2+F3)/3; F1/F2 dominate by epoch 32 | Saved checkpoint is wrong for Task 2 |
+| Gain aug covers F3 regime in only ~6.5% of steps | `prob=0.5` × log-fraction in [700,1300] / [20,2000] | Weak persistent gradient pressure on g≈990 |
+| `read_var` not augmented | Augmented patches use source stack `read_var`≈2490–2700; real F3 has `read_var`=3730 | Anscombe transform is slightly wrong for F3 even with correct gain |
+
+**What would fix this (next run):**
+- `GroupNorm(affine=False)` — removes the slow forgetting mechanism entirely; conv weights are gain-equivariant by construction and stay that way
+- `bias=False` on head `Conv3d` and all `ConvTranspose3d` layers — eliminates gain-specific constant offsets
+- `gain_aug.prob: 0.75` and pair each augmented gain with the corresponding `read_var` sampled from measured levels
+- Early stopping on `min(F1_stSNR, F3_stSNR)` or a F3-weighted metric — prevents the optimizer from discarding the Task 2 checkpoint
+
+---
+
 ## Summary
 
 | Measurement | Finding | Decision |
@@ -369,7 +408,7 @@ See [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) for a full audit. Summary of the most i
 | nb01: τ₀.₅ = 46 frames | Signal decays over 46 frames | T = 64 (ablation) / 128 (full) |
 | nb02: metric geometry | 2-D methods can't win both sSNR and tSNR | 3-D voxel-level, N2V3D |
 | nb03: noise model | A1/B1 R²≈0.27; C2/D2 R²≈0.94 | Fitted gains used; NLL risky on A1/B1 |
-| nb05: gain sensitivity | 3× mismatch = −14.94 dB | LogUniform g ∈ [20, 2000], prob=0.5 |
+| nb05: gain sensitivity | 3× mismatch = −14.94 dB | LogUniform g ∈ [20, 2000], prob=0.5 (insufficient — see full training results) |
 | nb06: masking | 1-voxel blind-spot sufficient | mask_fraction = 0.005 |
 | nb09: patch sampling | 100% of patches contain active pixels | Random sampling sufficient |
 | nb10: val stack calibration | R²=0.001–0.24 for F0–F3 | 5-arm loss ablation to pick empirically |

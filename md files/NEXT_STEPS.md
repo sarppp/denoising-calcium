@@ -190,9 +190,49 @@ Estimated impact: ~1–2 dB total. Our patch=128³ (vs their 64³) gives more co
 
 ---
 
-## 🔄 Currently running
+## 📈 Full training progress (H200 141GB, batch=16, patch=128³)
 
-**Full training — n2v3d_large** (winner from model comparison, H200 141GB):
+**Config:** n2v3d_large, 100 epochs, cosine restarts ×3 (restart at ~epoch 33, 67), patience=10
+
+| Epoch | F1 | F2 | F3 | Mean | Task1 (F1+F2)/2 | Task2 (F3) |
+|-------|-----|-----|-----|------|-----------------|------------|
+| Raw noisy | +7.27 | −0.79 | −6.64 | — | +3.24 | −6.64 |
+| 0 | −3.26 | −0.86 | −1.69 | −1.94 | −2.06 | −1.69 |
+| 10 | −1.51 | +6.58 | +3.48 | +2.85 | +2.54 | +3.48 |
+| 18 | +9.21 | +12.30 | +1.03 | +7.51 | +10.76 | +1.03 |
+| 23 | +18.86 | +12.06 | +0.85 | +10.59 | +15.46 | +0.85 |
+| 34 | +20.66 | +11.78 | +0.80 | +11.08 | +16.22 | +0.80 |
+| 40 | +20.15 | +12.80 | +0.53 | +11.16 | +16.47 | +0.53 |
+| **42** (final) | **+22.11** | **+12.76** | **+0.57** | — | **+17.43** | +0.57 |
+| 🎯 #1 target | — | — | — | — | **22.14** | **16.75** |
+
+**Training complete — early stopping at epoch 42, best_stSNR=12.177, 1h55m on H200**
+
+**Key findings:**
+- F1 at epoch 42: **+22.11 dB** — within 0.03 dB of #1's 22.14 dB on Task 1 🔥
+- F3 (Task 2) declined monotonically from +8.40 (epoch 7) → +0.57 (epoch 42)
+  - Model overfits to in-distribution (F1/F2) as training progresses
+  - Best Task 2 checkpoint is an **early epoch**, not best.pt
+  - Gain augmentation (prob=0.5) insufficient to prevent OOD forgetting
+- **best.pt** = mean stSNR 12.177 (~epoch 32) — best for Task 1 submission
+- Cosine restart at epoch ~33 helped F1 but did NOT recover F3
+
+**Checkpoints to score for Task 2:**
+- `epoch_0005.pt` — F3 was around +5 dB here
+- `epoch_0010.pt` — F3 was ~+3.5 dB
+- Compare against best.pt — use whichever wins on F3 for Task 2 submission
+
+**For next run (architecture fixes):**
+- `self.head = nn.Conv3d(chs[0], 1, kernel_size=1, bias=False)`
+- `nn.ConvTranspose3d(..., bias=False)`
+- `nn.GroupNorm(..., affine=False)`
+- Consider higher gain_aug prob (0.7–0.8) to reduce OOD forgetting
+
+---
+
+## ✅ Full training — COMPLETED (2026-05-26, 1h55m, H200 141GB)
+
+**n2v3d_large**, batch=16, patch=128³, early stop epoch 42. Outputs: `runs/full_training/`
 
 ```bash
 export DATA=.../data/train

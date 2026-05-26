@@ -2,20 +2,32 @@
 CIDC25 — Modal training app
 ============================
 
-Volumes:
-  cidc-data  →  /data   train/A1.tif … D2.tif + val/F0.tif … F3.tif
-  cidc-runs  →  /runs   best.pt, last.pt, train_*.jsonl  (persists between runs)
+# ── Upload data (one-time) ────────────────────────────────────────────────────
+uv run --env-file modal/.env modal run modal/upload_data.py
 
-Quick start:
-  modal run modal/app.py              # full training  (~3h A100-80GB, ~$7.50)
-  modal run modal/app.py --probe      # 4-batch sanity check (~2 min)
-  modal run modal/app.py --no-resume  # ignore last.pt, start fresh
+# ── Full training (fresh start) ───────────────────────────────────────────────
+uv run --env-file modal/.env modal run modal/app.py --no-resume
 
-Monitor a running job:
-  modal app logs cidc25-training
+# ── Resume from last checkpoint ───────────────────────────────────────────────
+uv run --env-file modal/.env modal run modal/app.py
 
-Download outputs:
-  modal run modal/download.py
+# ── Quick 4-batch sanity check (~2 min) ───────────────────────────────────────
+uv run --env-file modal/.env modal run modal/app.py --probe
+
+# ── Override epoch count (e.g. test with 2 epochs) ────────────────────────────
+uv run --env-file modal/.env modal run modal/app.py --no-resume --epochs 2
+
+# ── Different config or run name ──────────────────────────────────────────────
+uv run --env-file modal/.env modal run modal/app.py --config n2v3d.yaml --run-name test_base
+
+# ── Monitor a running job ─────────────────────────────────────────────────────
+modal app logs cidc25-training
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+#   cidc-data  →  /data   train/A1.tif … D2.tif + val/F0.tif … F3.tif
+#   cidc-runs  →  /runs   best.pt, last.pt, train_*.jsonl  (persists between runs)
+#
+# Outputs download automatically to runs/<run-name>/ after training completes.
 """
 
 from pathlib import Path
