@@ -136,12 +136,24 @@ def main() -> None:
         p.error("--config requires --ckpt")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    print(f"Device  : {device}")
+    if device.type == "cuda":
+        free, total = torch.cuda.mem_get_info()
+        print(f"VRAM    : {free/1024**3:.1f} GB free / {total/1024**3:.1f} GB total")
+
+    print(f"Loading checkpoint: {args.ckpt} ...", flush=True)
     model, cfg = _load_model(args.config, args.ckpt, device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model   : {cfg.model.name}  ({n_params/1e6:.2f}M params)")
+    print(f"Tile    : {cfg.inference.tile}  overlap={cfg.inference.overlap}")
+
+    if device.type == "cuda":
+        free, total = torch.cuda.mem_get_info()
+        print(f"VRAM after model load: {free/1024**3:.1f} GB free / {total/1024**3:.1f} GB total")
 
     tta_info = "off (--no-tta)" if args.no_tta else \
                f"rotations={cfg.inference.tta.rotations}, flips={cfg.inference.tta.flips}"
-    print(f"TTA: {tta_info}")
+    print(f"TTA     : {tta_info}")
     print()
 
     if args.data is not None:
@@ -158,20 +170,40 @@ def main() -> None:
             if not noisy_path.exists():
                 print(f"  {name}: not found, skipping")
                 continue
-            print(f"  Scoring {name} ...", end=" ", flush=True)
-            r = score_one(model, cfg, noisy_path, ref_path, device, args.alpha, args.no_tta)
-            results.append(r)
-            print(f"stSNR={r['stSNR']:+.2f} dB  (sSNR={r['sSNR']:+.2f}, tSNR={r['tSNR']:+.2f})")
+            print(f"  Scoring {name} ...", flush=True)
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats()
+            try:
+                import time, sys
+                t0 = time.perf_counter()
+                r = score_one(model, cfg, noisy_path, ref_path, device, args.alpha, args.no_tta)
+                elapsed = time.perf_counter() - t0
+                if device.type == "cuda":
+                    peak = torch.cuda.max_memory_allocated() / 1024**3
+                    free2, _ = torch.cuda.mem_get_info()
+                    print(f"    OK  stSNR={r['stSNR']:+.3f} dB  sSNR={r['sSNR']:+.3f}  tSNR={r['tSNR']:+.3f}"
+                          f"  time={elapsed:.1f}s  peak_vram={peak:.2f}GB  free={free2/1024**3:.1f}GB", flush=True)
+                else:
+                    print(f"    OK  stSNR={r['stSNR']:+.3f} dB  sSNR={r['sSNR']:+.3f}  tSNR={r['tSNR']:+.3f}"
+                          f"  time={elapsed:.1f}s", flush=True)
+                results.append(r)
+            except torch.cuda.OutOfMemoryError as e:
+                print(f"    OOM on {name}: {e}", flush=True)
+                print(f"    --> try --no-tta or reduce inference.tile in config", flush=True)
+            except Exception as e:
+                import traceback, sys
+                print(f"    ERROR on {name}: {e}", flush=True)
+                traceback.print_exc(file=sys.stdout)
 
         if results:
             print()
             print(f"{'Stack':<8} {'sSNR':>8} {'tSNR':>8} {'stSNR':>8}")
             print("-" * 36)
             for r in results:
-                print(f"{r['file']:<8} {r['sSNR']:>+8.2f} {r['tSNR']:>+8.2f} {r['stSNR']:>+8.2f}")
+                print(f"{r['file']:<8} {r['sSNR']:>+8.3f} {r['tSNR']:>+8.3f} {r['stSNR']:>+8.3f}")
             mean_st = sum(r["stSNR"] for r in results) / len(results)
             print("-" * 36)
-            print(f"{'mean':<8} {'':>8} {'':>8} {mean_st:>+8.2f}")
+            print(f"{'mean':<8} {'':>8} {'':>8} {mean_st:>+8.3f}")
 
     elif args.noisy is not None:
         ref_path = args.ref

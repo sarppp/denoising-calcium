@@ -84,5 +84,5 @@ inference:
   tile:    [128, 128, 128]              # FULL TRAINING ✅ (was [64,64,64] — matches training patch)
   overlap: [32, 16, 16]                 # FULL TRAINING ✅ (was [16,16,16] — larger T overlap for longer tile)
   tta:
-    rotations: 4
-    flips: true
+    rotations: 1
+    flips: false
