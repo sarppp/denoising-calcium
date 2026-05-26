@@ -37,9 +37,9 @@ model:
 data:
   patch:       [128, 128, 128]          # FULL TRAINING ✅ (was [64,64,64] for model size test)
   stride:      [32, 64, 64]             # FULL TRAINING ✅ (was [16,32,32])
-  batch_size:  16                       # FULL TRAINING ✅ — A100 80GB + grad_ckpt=true
+  batch_size:  16
   num_workers: 4
-  samples_per_epoch: 4000               # FULL TRAINING ✅ (4000÷16=250 steps/epoch, matches ablation density)
+  samples_per_epoch: 4000               # 4000÷16=250 steps/epoch
   train_stacks: [A1, B1, C2, D2]
   ref_stack:   F0
   val_stacks:  [F1, F2, F3]
@@ -58,8 +58,8 @@ training:
   epochs: 100                           # FULL TRAINING ✅ (was 10 — early stopping decides actual endpoint)
   warmup_steps: 500
   grad_clip: 1.0
-  grad_accum: 1
-  grad_ckpt: true                       # required: batch=16 + patch=[128³] needs grad_ckpt on A100 80GB
+  grad_accum: 1                          # batch=16 native — no accumulation needed
+  grad_ckpt: false                      # H200 141GB has headroom — peak=72.77GiB without it, ~95GB without
   ema_decay: 0.999
   amp: true
   seed: 0

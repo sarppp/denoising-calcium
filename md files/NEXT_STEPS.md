@@ -167,9 +167,32 @@ uv run cidc train configs/ablation_huber.yaml        --data $DATA --out $RUNS/hu
 
 ---
 
+## 🔍 Leaderboard findings (2026-05-26)
+
+Public leaderboard (Final Submission Phase):
+
+| Task | #1 score | Algorithm | Config |
+|------|----------|-----------|--------|
+| Task 1 — Content Generalisation | **22.14 dB** | N2V 3D | No-ConvBias, NoBNAffine, patch=64³ |
+| Task 2 — Noise Level Generalisation | **16.75 dB** | N2V 3D | No-ConvBias, NoBNAffine, patch=64³ |
+
+**What they did differently:**
+1. `bias=False` on ALL conv layers including head + ConvTranspose3d (we have bias=True on head and upsampling)
+2. `GroupNorm(affine=False)` — no learnable scale/shift in normalisation layers
+3. Smaller patch=64³ → faster epochs → possibly more total epochs trained
+
+**Our architecture gaps (for next run):**
+- `self.head = nn.Conv3d(chs[0], 1, kernel_size=1)` → add `bias=False`
+- `nn.ConvTranspose3d(...)` → add `bias=False`
+- `nn.GroupNorm(num_groups=..., num_channels=...)` → add `affine=False`
+
+Estimated impact: ~1–2 dB total. Our patch=128³ (vs their 64³) gives more context — likely compensates partially.
+
+---
+
 ## 🔄 Currently running
 
-**Full training — n2v3d_large** (winner from model comparison, L40S):
+**Full training — n2v3d_large** (winner from model comparison, H200 141GB):
 
 ```bash
 export DATA=.../data/train

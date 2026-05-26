@@ -493,6 +493,7 @@ def train(cfg, data_root: Path, out_dir: Path,
 
     log_every = cfg.training.log_every
     nan_step_count = 0   # cumulative across all epochs; abort at NAN_ABORT_LIMIT
+    t_last_log = time.time()   # for per-step timing
 
     for epoch in range(start_epoch, cfg.training.epochs):
         model.train()
@@ -559,9 +560,13 @@ def train(cfg, data_root: Path, out_dir: Path,
                 ema.update(model)
                 global_step += 1
                 if global_step % log_every == 0:
+                    now = time.time()
+                    step_sec = (now - t_last_log) / log_every
+                    t_last_log = now
                     log.log(kind="step", epoch=epoch, step=global_step,
                             loss=running / max(1, count),
-                            lr=opt.param_groups[0]["lr"])
+                            lr=opt.param_groups[0]["lr"],
+                            step_sec=round(step_sec, 3))
 
             running += float(loss.item()) * cfg.training.grad_accum
             count += 1

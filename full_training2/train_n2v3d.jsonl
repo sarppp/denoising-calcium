@@ -1,0 +1,33 @@
+{"ts_sec": 0.026522883000000164, "gpu_peak_b": 0, "kind": "header", "name": "train_n2v3d", "time": "2026-05-26 09:10:04", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA A100 80GB PCIe", "pid": 27}
+{"ts_sec": 0.027958777999998574, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "n2v3d_large", "model": "n2v3d", "device": "cuda", "out": "/runs/full_training", "data": "/data/train"}
+{"ts_sec": 0.37177257899999994, "gpu_peak_b": 22411264, "kind": "model", "name": "n2v3d", "params_m": 5.601121, "patch": [128, 128, 128], "batch": 16, "grad_accum": 1, "amp": true}
+{"ts_sec": 0.017455843999999665, "gpu_peak_b": 0, "kind": "header", "name": "train_n2v3d", "time": "2026-05-26 09:16:46", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA L40S", "pid": 27}
+{"ts_sec": 0.2707972889999999, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "n2v3d_large", "model": "n2v3d", "device": "cuda", "out": "/runs/full_training", "data": "/data/train"}
+{"ts_sec": 0.4867195579999999, "gpu_peak_b": 22411264, "kind": "model", "name": "n2v3d", "params_m": 5.601121, "patch": [128, 128, 128], "batch": 8, "grad_accum": 2, "amp": true}
+{"ts_sec": 12.521779731999999, "gpu_peak_b": 39119289856, "kind": "probe-ok", "loss_name": "huber"}
+{"ts_sec": 86.451931594, "gpu_peak_b": 39141701120, "kind": "step", "epoch": 0, "step": 50, "loss": 227.29659695095486, "lr": 0.00010256884996547639}
+{"ts_sec": 157.944590127, "gpu_peak_b": 39141701120, "kind": "step", "epoch": 0, "step": 100, "loss": 225.89603044519473, "lr": 0.0002700038134187002}
+{"ts_sec": 193.853580148, "gpu_peak_b": 39141701120, "kind": "epoch", "epoch": 0, "train_loss": 226.60988720703125, "dt_sec": 181.33023166656494}
+{"ts_sec": 216.221373011, "gpu_peak_b": 1829410304, "kind": "val", "epoch": 0, "file": "F1", "sSNR": -2.9094446627097015, "tSNR": -3.9060382238284026, "stSNR": -3.4077414432690523, "wall_sec": 19.454151214999996}
+{"ts_sec": 236.185391379, "gpu_peak_b": 1829410304, "kind": "val", "epoch": 0, "file": "F2", "sSNR": -2.043951636400611, "tSNR": -2.967305088761356, "stSNR": -2.5056283625809836, "wall_sec": 18.875159343999997}
+{"ts_sec": 257.05375357599996, "gpu_peak_b": 1829410304, "kind": "val", "epoch": 0, "file": "F3", "sSNR": -5.388913434680848, "tSNR": -6.858792082726053, "stSNR": -6.123852758703451, "wall_sec": 19.481070732000006}
+{"ts_sec": 257.25290301399997, "gpu_peak_b": 113761792, "kind": "best", "epoch": 0, "stSNR": -4.0124075215178285}
+{"ts_sec": 298.30671583199995, "gpu_peak_b": 39165292032, "kind": "step", "epoch": 1, "step": 150, "loss": 226.4388779620735, "lr": 2.6676598245778528e-05}
+{"ts_sec": 370.208540089, "gpu_peak_b": 39165292032, "kind": "step", "epoch": 1, "step": 200, "loss": 225.32107840928455, "lr": 0.000192012203133736}
+{"ts_sec": 441.874227254, "gpu_peak_b": 39165292032, "kind": "step", "epoch": 1, "step": 250, "loss": 224.77724760124482, "lr": 0.0002998925632224497}
+{"ts_sec": 441.98949919, "gpu_peak_b": 113761792, "kind": "epoch", "epoch": 1, "train_loss": 224.86896197509765, "dt_sec": 184.55235743522644}
+{"ts_sec": 461.58388482099997, "gpu_peak_b": 1830262272, "kind": "val", "epoch": 1, "file": "F1", "sSNR": -2.805470016086981, "tSNR": -3.7899463087480654, "stSNR": -3.297708162417523, "wall_sec": 18.188638190999995}
+{"ts_sec": 480.267187874, "gpu_peak_b": 1830262272, "kind": "val", "epoch": 1, "file": "F2", "sSNR": -0.832176775700356, "tSNR": -1.5733476323983278, "stSNR": -1.2027622040493418, "wall_sec": 18.104128395999965}
+{"ts_sec": 498.867109256, "gpu_peak_b": 1830262272, "kind": "val", "epoch": 1, "file": "F3", "sSNR": -1.7093950145768946, "tSNR": -2.9199471915332227, "stSNR": -2.3146711030550584, "wall_sec": 18.074332632999983}
+{"ts_sec": 499.05041853299997, "gpu_peak_b": 115465728, "kind": "best", "epoch": 1, "stSNR": -2.2717138231739744}
+{"ts_sec": 499.223999233, "gpu_peak_b": 115465728, "kind": "train-done", "best_stSNR": -2.2717138231739744}
+{"ts_sec": 0.018597025000000045, "gpu_peak_b": 0, "kind": "header", "name": "train_n2v3d", "time": "2026-05-26 09:35:31", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA A100 80GB PCIe", "pid": 27}
+{"ts_sec": 0.5473462320000007, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "n2v3d_large", "model": "n2v3d", "device": "cuda", "out": "/runs/full_training", "data": "/data/train"}
+{"ts_sec": 0.8086575119999999, "gpu_peak_b": 22411264, "kind": "model", "name": "n2v3d", "params_m": 5.601121, "patch": [128, 128, 128], "batch": 16, "grad_accum": 1, "amp": true}
+{"ts_sec": 3.852368504000001, "gpu_peak_b": 134493184, "kind": "resumed", "from_epoch": 1, "best_val": -2.2717138231739744, "bad_epochs": 0, "global_step": 250}
+{"ts_sec": 3.853689868, "gpu_peak_b": 112081920, "kind": "already-done", "epochs": 2}
+{"ts_sec": 0.01885752700000065, "gpu_peak_b": 0, "kind": "header", "name": "train_n2v3d", "time": "2026-05-26 09:37:16", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA A100 80GB PCIe", "pid": 27}
+{"ts_sec": 0.4155587230000002, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "n2v3d_large", "model": "n2v3d", "device": "cuda", "out": "/runs/full_training", "data": "/data/train"}
+{"ts_sec": 0.6112368550000005, "gpu_peak_b": 22411264, "kind": "model", "name": "n2v3d", "params_m": 5.601121, "patch": [128, 128, 128], "batch": 16, "grad_accum": 1, "amp": true}
+{"ts_sec": 2.070410828, "gpu_peak_b": 134493184, "kind": "resumed", "from_epoch": 1, "best_val": -2.2717138231739744, "bad_epochs": 0, "global_step": 250}
+{"ts_sec": 2.0710009630000004, "gpu_peak_b": 112081920, "kind": "already-done", "epochs": 2}

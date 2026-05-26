@@ -1,0 +1,83 @@
+{"ts_sec": 0.01336188300001595, "gpu_peak_b": 0, "kind": "header", "name": "train_mamba3d", "time": "2026-05-25 13:42:01", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA L40S", "pid": 212110}
+{"ts_sec": 0.013655268000093201, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "mamba3d_v1", "model": "mamba3d", "device": "cuda", "out": "/teamspace/studios/this_studio/workspace/denoising-calcium/runs/mamba_base", "data": "/teamspace/studios/this_studio/workspace/denoising-calcium/data/train"}
+{"ts_sec": 0.012652092999815068, "gpu_peak_b": 0, "kind": "header", "name": "train_mamba3d", "time": "2026-05-25 13:48:17", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA L40S", "pid": 236066}
+{"ts_sec": 0.012933791999785171, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "mamba3d_v1", "model": "mamba3d", "device": "cuda", "out": "/teamspace/studios/this_studio/workspace/denoising-calcium/runs/mamba_base", "data": "/teamspace/studios/this_studio/workspace/denoising-calcium/data/train"}
+{"ts_sec": 0.012737674999698356, "gpu_peak_b": 0, "kind": "header", "name": "train_mamba3d", "time": "2026-05-25 13:48:51", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA L40S", "pid": 238458}
+{"ts_sec": 0.013052635000349255, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "mamba3d_v1", "model": "mamba3d", "device": "cuda", "out": "/teamspace/studios/this_studio/workspace/denoising-calcium/runs/mamba_base", "data": "/teamspace/studios/this_studio/workspace/denoising-calcium/data/train"}
+{"ts_sec": 0.029273563999595353, "gpu_peak_b": 0, "kind": "header", "name": "train_mamba3d", "time": "2026-05-25 13:52:33", "torch": "2.6.0+cu124", "cuda_available": true, "cuda_device": "NVIDIA L40S", "pid": 253739}
+{"ts_sec": 0.0295939930001623, "gpu_peak_b": 0, "kind": "train-start", "cfg_name": "mamba3d_v1", "model": "mamba3d", "device": "cuda", "out": "/teamspace/studios/this_studio/workspace/denoising-calcium/runs/mamba_base", "data": "/teamspace/studios/this_studio/workspace/denoising-calcium/data/train"}
+{"ts_sec": 2.2770841120000114, "gpu_peak_b": 1892352, "kind": "model", "name": "mamba3d", "params_m": 0.470385, "patch": [64, 64, 64], "batch": 32, "grad_accum": 1, "amp": true}
+{"ts_sec": 6.292554804000247, "gpu_peak_b": 10169537024, "kind": "probe-ok", "loss_name": "huber"}
+{"ts_sec": 16.875310940999952, "gpu_peak_b": 10169537024, "kind": "step", "epoch": 0, "step": 50, "loss": 644.6044211874203, "lr": 0.00017230959099527512}
+{"ts_sec": 19.305133191000095, "gpu_peak_b": 10169537024, "kind": "epoch", "epoch": 0, "train_loss": 638.3722622779107, "dt_sec": 13.011771202087402}
+{"ts_sec": 19.37073178999981, "gpu_peak_b": 24610304, "kind": "checkpoint", "epoch": 0, "path": "epoch_0001.pt"}
+{"ts_sec": 35.43194414299978, "gpu_peak_b": 450951680, "kind": "val", "epoch": 0, "file": "F1", "sSNR": -3.025838079960171, "tSNR": -4.007107801895883, "stSNR": -3.516472940928027, "wall_sec": 15.6014642680002}
+{"ts_sec": 51.19314725200002, "gpu_peak_b": 450951680, "kind": "val", "epoch": 0, "file": "F2", "sSNR": -2.635602183079719, "tSNR": -3.563862412069941, "stSNR": -3.09973229757483, "wall_sec": 15.529798843999743}
+{"ts_sec": 67.04973909099954, "gpu_peak_b": 450951680, "kind": "val", "epoch": 0, "file": "F3", "sSNR": -7.220423063938955, "tSNR": -8.826100967041334, "stSNR": -8.023262015490145, "wall_sec": 15.62694914399981}
+{"ts_sec": 67.0872498990002, "gpu_peak_b": 26502656, "kind": "best", "epoch": 0, "stSNR": -4.8798224179976675}
+{"ts_sec": 75.1120102799996, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 1, "step": 100, "loss": 631.2574429898649, "lr": 0.00010457353899807945}
+{"ts_sec": 79.88714085999982, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 1, "train_loss": 632.1384442237115, "dt_sec": 12.761123418807983}
+{"ts_sec": 79.97203834900029, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 1, "path": "epoch_0002.pt"}
+{"ts_sec": 95.96427311099978, "gpu_peak_b": 450951680, "kind": "val", "epoch": 1, "file": "F1", "sSNR": -3.0161790744421686, "tSNR": -3.980015099974446, "stSNR": -3.4980970872083073, "wall_sec": 15.529142848999982}
+{"ts_sec": 111.76571375599997, "gpu_peak_b": 450951680, "kind": "val", "epoch": 1, "file": "F2", "sSNR": -2.5523398931093517, "tSNR": -3.4462104286872517, "stSNR": -2.9992751608983017, "wall_sec": 15.571200445000613}
+{"ts_sec": 127.72614982399955, "gpu_peak_b": 450951680, "kind": "val", "epoch": 1, "file": "F3", "sSNR": -7.012789935677889, "tSNR": -8.625173419100454, "stSNR": -7.818981677389171, "wall_sec": 15.723641561000477}
+{"ts_sec": 127.7672302609999, "gpu_peak_b": 26502656, "kind": "best", "epoch": 1, "stSNR": -4.77211797516526}
+{"ts_sec": 133.46205996299977, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 2, "step": 150, "loss": 616.1803570556641, "lr": 3.430462369176619e-05}
+{"ts_sec": 140.57577456199942, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 2, "train_loss": 628.1193018267231, "dt_sec": 12.768720626831055}
+{"ts_sec": 140.6535688439999, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 2, "path": "epoch_0003.pt"}
+{"ts_sec": 156.81266601199968, "gpu_peak_b": 450951680, "kind": "val", "epoch": 2, "file": "F1", "sSNR": -3.006675080031521, "tSNR": -3.9507226275802867, "stSNR": -3.478698853805904, "wall_sec": 15.682601929999691}
+{"ts_sec": 172.71042631199998, "gpu_peak_b": 450951680, "kind": "val", "epoch": 2, "file": "F2", "sSNR": -2.4736753905213593, "tSNR": -3.326529586265334, "stSNR": -2.9001024883933466, "wall_sec": 15.660861495999598}
+{"ts_sec": 188.57636998999988, "gpu_peak_b": 450951680, "kind": "val", "epoch": 2, "file": "F3", "sSNR": -6.811419671631312, "tSNR": -8.431360923851281, "stSNR": -7.621390297741296, "wall_sec": 15.630825743999594}
+{"ts_sec": 188.61420281699975, "gpu_peak_b": 26502656, "kind": "best", "epoch": 2, "stSNR": -4.666730546646849}
+{"ts_sec": 191.96014347999972, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 3, "step": 200, "loss": 625.5212836632362, "lr": 4.183451793390636e-07}
+{"ts_sec": 201.43098098999963, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 3, "train_loss": 624.3307682160408, "dt_sec": 12.781629085540771}
+{"ts_sec": 201.5081242690003, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 3, "path": "epoch_0004.pt"}
+{"ts_sec": 217.5721092519998, "gpu_peak_b": 450951680, "kind": "val", "epoch": 3, "file": "F1", "sSNR": -2.9972633086626486, "tSNR": -3.922539127388911, "stSNR": -3.45990121802578, "wall_sec": 15.593217908999577}
+{"ts_sec": 233.36315603299954, "gpu_peak_b": 450951680, "kind": "val", "epoch": 3, "file": "F2", "sSNR": -2.3953127245779875, "tSNR": -3.2044960513732743, "stSNR": -2.799904387975631, "wall_sec": 15.559665707999557}
+{"ts_sec": 249.17274558699955, "gpu_peak_b": 450951680, "kind": "val", "epoch": 3, "file": "F3", "sSNR": -6.609648729864755, "tSNR": -8.239043326209892, "stSNR": -7.4243460280373235, "wall_sec": 15.577679734999947}
+{"ts_sec": 249.21118951500011, "gpu_peak_b": 26502656, "kind": "best", "epoch": 3, "stSNR": -4.5613838780129115}
+{"ts_sec": 250.22474895899995, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 4, "step": 250, "loss": 469.1065979003906, "lr": 0.00017831879830605937}
+{"ts_sec": 259.98544459999994, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 4, "step": 300, "loss": 623.4611337699142, "lr": 0.00011368235063439102}
+{"ts_sec": 262.0378310469996, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 4, "train_loss": 614.2715203069871, "dt_sec": 12.790542125701904}
+{"ts_sec": 262.1205690890001, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 4, "path": "epoch_0005.pt"}
+{"ts_sec": 278.14871180999944, "gpu_peak_b": 450951680, "kind": "val", "epoch": 4, "file": "F1", "sSNR": -2.9876799557424962, "tSNR": -3.897336604536159, "stSNR": -3.442508280139328, "wall_sec": 15.56452546699984}
+{"ts_sec": 294.0971327139996, "gpu_peak_b": 450951680, "kind": "val", "epoch": 4, "file": "F2", "sSNR": -2.3175827506207627, "tSNR": -3.0868688066179004, "stSNR": -2.7022257786193316, "wall_sec": 15.710963958999855}
+{"ts_sec": 309.9791388120002, "gpu_peak_b": 450951680, "kind": "val", "epoch": 4, "file": "F3", "sSNR": -6.41045628787694, "tSNR": -8.049998900155076, "stSNR": -7.230227594016008, "wall_sec": 15.64982984299968}
+{"ts_sec": 310.01784119199965, "gpu_peak_b": 26502656, "kind": "best", "epoch": 4, "stSNR": -4.458320550924889}
+{"ts_sec": 318.4412240490001, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 5, "step": 350, "loss": 607.7142830873147, "lr": 4.146850525847582e-05}
+{"ts_sec": 322.8299564029994, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 5, "train_loss": 609.2007372456212, "dt_sec": 12.776492834091187}
+{"ts_sec": 322.9089724609994, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 5, "path": "epoch_0006.pt"}
+{"ts_sec": 339.11071284099944, "gpu_peak_b": 450951680, "kind": "val", "epoch": 5, "file": "F1", "sSNR": -2.978399147445862, "tSNR": -3.87691764040334, "stSNR": -3.427658393924601, "wall_sec": 15.725863397000467}
+{"ts_sec": 355.06587455999943, "gpu_peak_b": 450951680, "kind": "val", "epoch": 5, "file": "F2", "sSNR": -2.240482891946413, "tSNR": -2.9732246141285303, "stSNR": -2.6068537530374716, "wall_sec": 15.719561048999822}
+{"ts_sec": 370.9664871929999, "gpu_peak_b": 450951680, "kind": "val", "epoch": 5, "file": "F3", "sSNR": -6.2152349896184, "tSNR": -7.862356728703267, "stSNR": -7.0387958591608335, "wall_sec": 15.665634459000103}
+{"ts_sec": 371.00489120600014, "gpu_peak_b": 26502656, "kind": "best", "epoch": 5, "stSNR": -4.357769335374302}
+{"ts_sec": 377.0838022099997, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 6, "step": 400, "loss": 615.1822814941406, "lr": 1.6698804635747689e-06}
+{"ts_sec": 383.8143876129998, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 6, "train_loss": 607.7184834634104, "dt_sec": 12.773628234863281}
+{"ts_sec": 383.89811501799977, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 6, "path": "epoch_0007.pt"}
+{"ts_sec": 399.94837833099973, "gpu_peak_b": 450951680, "kind": "val", "epoch": 6, "file": "F1", "sSNR": -2.968973649926202, "tSNR": -3.85989165124124, "stSNR": -3.414432650583721, "wall_sec": 15.586181269000008}
+{"ts_sec": 415.72464943700015, "gpu_peak_b": 450951680, "kind": "val", "epoch": 6, "file": "F2", "sSNR": -2.1581954291759615, "tSNR": -2.8584758139887185, "stSNR": -2.50833562158234, "wall_sec": 15.545084391999808}
+{"ts_sec": 431.6039564009998, "gpu_peak_b": 450951680, "kind": "val", "epoch": 6, "file": "F3", "sSNR": -6.007523523972054, "tSNR": -7.661625248304199, "stSNR": -6.834574386138127, "wall_sec": 15.64320141799999}
+{"ts_sec": 431.646982409, "gpu_peak_b": 26502656, "kind": "best", "epoch": 6, "stSNR": -4.2524475527680625}
+{"ts_sec": 435.3964963669996, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 7, "step": 450, "loss": 607.1935557047526, "lr": 0.0001836727197823842}
+{"ts_sec": 444.4735463850002, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 7, "train_loss": 602.372190660046, "dt_sec": 12.7905855178833}
+{"ts_sec": 444.55867957400005, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 7, "path": "epoch_0008.pt"}
+{"ts_sec": 460.59996301699994, "gpu_peak_b": 450951680, "kind": "val", "epoch": 7, "file": "F1", "sSNR": -2.959622596250294, "tSNR": -3.8462483025778913, "stSNR": -3.402935449414093, "wall_sec": 15.577770869999767}
+{"ts_sec": 476.35573257600026, "gpu_peak_b": 450951680, "kind": "val", "epoch": 7, "file": "F2", "sSNR": -2.0733651476919945, "tSNR": -2.7521668275640185, "stSNR": -2.4127659876280063, "wall_sec": 15.5227633960003}
+{"ts_sec": 492.11322640399976, "gpu_peak_b": 450951680, "kind": "val", "epoch": 7, "file": "F3", "sSNR": -5.798143888307168, "tSNR": -7.459983933580691, "stSNR": -6.6290639109439295, "wall_sec": 15.526860181000302}
+{"ts_sec": 492.2747494369996, "gpu_peak_b": 26502656, "kind": "best", "epoch": 7, "stSNR": -4.148255115995343}
+{"ts_sec": 493.67024356799993, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 8, "step": 500, "loss": 579.4236348470052, "lr": 0.00012267668336210413}
+{"ts_sec": 503.4371033319994, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 8, "step": 550, "loss": 601.1744128533129, "lr": 4.912211419847794e-05}
+{"ts_sec": 505.10067216599964, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 8, "train_loss": 598.2807139735067, "dt_sec": 12.788197040557861}
+{"ts_sec": 505.17775318500026, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 8, "path": "epoch_0009.pt"}
+{"ts_sec": 521.1479642269996, "gpu_peak_b": 450951680, "kind": "val", "epoch": 8, "file": "F1", "sSNR": -2.9502092733853127, "tSNR": -3.83571041090382, "stSNR": -3.3929598421445664, "wall_sec": 15.508155714999702}
+{"ts_sec": 536.8855103400001, "gpu_peak_b": 450951680, "kind": "val", "epoch": 8, "file": "F2", "sSNR": -1.9798894915215781, "tSNR": -2.652123410673328, "stSNR": -2.316006451097453, "wall_sec": 15.505970600999717}
+{"ts_sec": 552.6218183459996, "gpu_peak_b": 450951680, "kind": "val", "epoch": 8, "file": "F3", "sSNR": -5.567731537409951, "tSNR": -7.237955072238242, "stSNR": -6.402843304824097, "wall_sec": 15.505158212999959}
+{"ts_sec": 552.6851561069998, "gpu_peak_b": 26502656, "kind": "best", "epoch": 8, "stSNR": -4.037269866022039}
+{"ts_sec": 561.6138580119996, "gpu_peak_b": 10171429376, "kind": "step", "epoch": 9, "step": 600, "loss": 593.9523021418873, "lr": 3.7441343776484007e-06}
+{"ts_sec": 565.6239206170003, "gpu_peak_b": 10171429376, "kind": "epoch", "epoch": 9, "train_loss": 596.1792636994393, "dt_sec": 12.781682252883911}
+{"ts_sec": 565.710425841, "gpu_peak_b": 26502656, "kind": "checkpoint", "epoch": 9, "path": "epoch_0010.pt"}
+{"ts_sec": 581.8575947649997, "gpu_peak_b": 450951680, "kind": "val", "epoch": 9, "file": "F1", "sSNR": -2.941262901681429, "tSNR": -3.828174168568914, "stSNR": -3.3847185351251716, "wall_sec": 15.672773856999811}
+{"ts_sec": 597.8026863309997, "gpu_peak_b": 450951680, "kind": "val", "epoch": 9, "file": "F2", "sSNR": -1.8794633022767924, "tSNR": -2.5538928884751093, "stSNR": -2.2166780953759506, "wall_sec": 15.709191640999961}
+{"ts_sec": 613.6811322309995, "gpu_peak_b": 450951680, "kind": "val", "epoch": 9, "file": "F3", "sSNR": -5.321511893335757, "tSNR": -7.001787475539728, "stSNR": -6.161649684437743, "wall_sec": 15.64331612099977}
+{"ts_sec": 613.7846400130002, "gpu_peak_b": 26502656, "kind": "best", "epoch": 9, "stSNR": -3.921015438312955}
+{"ts_sec": 613.8462805589998, "gpu_peak_b": 26502656, "kind": "train-done", "best_stSNR": -3.921015438312955}

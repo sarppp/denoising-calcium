@@ -33,12 +33,14 @@ DATA_VOLUME = "cidc-data"
 RUNS_VOLUME = "cidc-runs"
 
 # GPU options (uncomment to switch):
-#   "t4"         — $0.59/h  ~12h  $7.08  (needs batch=8, grad_accum=2 in config)
-#   "l40s"       — $1.95/h  ~5h   $9.75  (current config is tuned for this)
-#   "a100-80gb"  — $2.50/h  ~3h   $7.50  ← default sweet spot
-#   "h100"       — $3.95/h  ~2h   $7.90
-#   "h200"       — $4.54/h  ~1.5h $6.81
-GPU_TYPE = "a100-80gb"
+#   "t4"            — $0.59/h  ~12h  $7.08  (needs batch=8, grad_accum=2 in config)
+#   "l40s"          — $1.95/h  ~5h   $9.75
+#   "a100-80gb"     — $2.50/h  ~3h   $7.50
+#   "h100"          — $3.95/h  ~2h   $7.90
+#   "h200"          — $4.54/h  ~1.5h $6.81
+#   "b200"          — $6.25/h  ~1.5h
+#   "rtx-pro-6000"  — 96 GB VRAM, fits batch=16 natively
+GPU_TYPE = "h200"
 
 CONFIG_FILE = "n2v3d_large.yaml"   # winner from model comparison
 RUN_NAME    = "full_training"       # sub-folder created under /runs/

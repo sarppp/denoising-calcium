@@ -205,6 +205,18 @@ def main() -> None:
             print("-" * 36)
             print(f"{'mean':<8} {'':>8} {'':>8} {mean_st:>+8.3f}")
 
+            # Always save results next to the checkpoint
+            out = {
+                "ckpt": str(args.ckpt),
+                "config": str(args.config),
+                "tta": not args.no_tta,
+                "mean_stSNR": mean_st,
+                "stacks": results,
+            }
+            save_path = args.ckpt.parent / "score_results.json"
+            save_path.write_text(json.dumps(out, indent=2))
+            print(f"\nSaved: {save_path}", flush=True)
+
     elif args.noisy is not None:
         ref_path = args.ref
         if ref_path is None:
